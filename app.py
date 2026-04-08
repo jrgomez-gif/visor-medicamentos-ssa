@@ -37,9 +37,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. FUNCIONES Y CARGA DE DATOS
+# 2. FUNCIONES DE LIMPIEZA Y CARGA DE DATOS
 # ==========================================
 def limpiar_texto_para_cruce(texto):
+    """Limpieza profunda EN SEGUNDO PLANO solo para el motor matemático."""
     if pd.isna(texto): return ""
     t = str(texto).lower().replace('/', ' ').replace('-', ' ')
     t = re.sub(r'[^a-z0-9ñáéíóú\s]', ' ', t)
@@ -47,20 +48,44 @@ def limpiar_texto_para_cruce(texto):
     t = re.sub(stopwords, ' ', t)
     return " ".join(t.split())
 
+def limpiar_vista_generica(texto):
+    """Limpieza VISUAL para que el usuario vea la Denominación Genérica de forma correcta."""
+    if pd.isna(texto): return ""
+    # Separa por diagonales, quita espacios, elimina los vacíos y vuelve a unir con una sola diagonal
+    partes = [p.strip() for p in str(texto).split('/') if p.strip()]
+    return " / ".join(partes)
+
 @st.cache_data
 def cargar_parquet():
     try:
         df = pd.read_parquet("base_registros_sanitarios.parquet")
         
-        # --- CORRECCIÓN DE VARIABLES AL VUELO ---
-        # 1. Renombrar "VistaAdministracion" a "ViaAdministracion"
+        # --- 1. LIMPIEZA VISUAL PARA EL USUARIO ---
+        if 'DenominacionGenerica' in df.columns:
+            df['DenominacionGenerica'] = df['DenominacionGenerica'].apply(limpiar_vista_generica)
+            
+        if 'Presentacion' in df.columns:
+            # Quita espacios dobles que a veces vienen de origen
+            df['Presentacion'] = df['Presentacion'].astype(str).str.replace(r'\s+', ' ', regex=True).str.strip()
+            
+        # --- 2. CORRECCIÓN DE VARIABLES AL VUELO ---
         if 'VistaAdministracion' in df.columns:
             df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
             
-        # 2. Formato de fecha a DD/MM/AAAA
         if 'FechaEmision' in df.columns:
             df['FechaEmision'] = pd.to_datetime(df['FechaEmision'], errors='coerce').dt.strftime('%d/%m/%Y')
-        # ----------------------------------------
+            
+        # --- 3. LIMPIEZA OCULTA PARA EL ALGORITMO ---
+        # Asegurarnos de que las variables existan para evitar errores
+        generica = df['DenominacionGenerica'] if 'DenominacionGenerica' in df.columns else ""
+        forma = df['FormaFarmaceutica'] if 'FormaFarmaceutica' in df.columns else ""
+        presentacion = df['Presentacion'] if 'Presentacion' in df.columns else ""
+        
+        df['Texto_Limpio_Generica'] = generica.apply(limpiar_texto_para_cruce)
+        df['Texto_Limpio_Forma'] = forma.apply(limpiar_texto_para_cruce)
+        df['Texto_Limpio_Presentacion'] = presentacion.apply(limpiar_texto_para_cruce)
+        
+        df['Busqueda_COFEPRIS'] = df['Texto_Limpio_Generica'] + " " + df['Texto_Limpio_Forma'] + " " + df['Texto_Limpio_Presentacion']
         
         return df, None
     except Exception as e:
@@ -144,8 +169,7 @@ with tab1:
         
     st.markdown(f"**Resultados encontrados:** {len(df_mostrar)} registros")
     
-    # --- OCULTAR COLUMNAS AL USUARIO FINAL ---
-    # Aquí añadimos UUID y ClaveCompendio para que no se muestren en pantalla
+    # Ocultar variables técnicas y no deseadas
     columnas_ocultas = [
         'Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Texto_Limpio_Presentacion', 'Busqueda_COFEPRIS',
         'UUID', 'ClaveCompendio'
