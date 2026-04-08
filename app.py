@@ -8,7 +8,7 @@ import time
 # ==========================================
 st.set_page_config(page_title="Visor COFEPRIS", page_icon="🇲🇽", layout="wide")
 
-# CSS Mejorado: Tema institucional y corrección del File Uploader
+# CSS Institucional y corrección del File Uploader
 st.markdown("""
     <style>
     /* Color de fondo de la barra lateral (Verde Oscuro) */
@@ -19,19 +19,17 @@ st.markdown("""
     [data-testid="stSidebar"] h1, 
     [data-testid="stSidebar"] h2, 
     [data-testid="stSidebar"] h3,
-    [data-testid="stSidebar"] label { color: white !important; }
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] li { color: white !important; }
     
     /* --- ARREGLO DEL CAJÓN DE SUBIR ARCHIVOS --- */
-    /* Fondo semitransparente para que resalte la zona de carga */
     [data-testid="stFileUploadDropzone"] {
         background-color: rgba(255, 255, 255, 0.1) !important; 
         border: 1px dashed rgba(255, 255, 255, 0.5) !important;
     }
-    /* Forzar a blanco todo el texto interno del cajón (Drag and drop...) */
     [data-testid="stFileUploadDropzone"] * {
         color: white !important; 
     }
-    /* Estilizar el botón interno de 'Browse files' */
     [data-testid="stFileUploadDropzone"] button {
         background-color: #B38E5D !important;
         color: white !important;
@@ -40,7 +38,6 @@ st.markdown("""
     [data-testid="stFileUploadDropzone"] button:hover {
         background-color: #6F1827 !important;
     }
-    /* ------------------------------------------- */
 
     /* Estilos del Gobierno para el título principal */
     h1 { color: #6F1827; border-bottom: 2px solid #B38E5D; padding-bottom: 10px; }
@@ -52,7 +49,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. CARGA DE DATOS COFEPRIS (PARQUET)
+# 2. CARGA DE DATOS COFEPRIS (PARQUET) CON DEBUG
 # ==========================================
 @st.cache_data
 def cargar_parquet():
@@ -63,11 +60,12 @@ def cargar_parquet():
         df['Presentacion'] = df['Presentacion'].fillna('')
         # Crear columna de búsqueda combinada
         df['Busqueda_COFEPRIS'] = df['DenominacionGenerica'].astype(str) + " " + df['Presentacion'].astype(str)
-        return df
+        return df, None
     except Exception as e:
-        return None
+        # Si falla, devolvemos el error exacto para saber qué pasa
+        return None, str(e)
 
-df_cofepris = cargar_parquet()
+df_cofepris, error_carga = cargar_parquet()
 
 # ==========================================
 # 3. BARRA LATERAL (SIDEBAR) Y FIRMA
@@ -80,25 +78,26 @@ with st.sidebar:
         st.caption("Cofepris - Buscador")
     
     st.markdown("---")
-    st.markdown("## ⚙️ Panel de Análisis (SSA)")
     
-    # Cajón para subir archivo
-    archivo_ssa = st.file_uploader("1. Suba el archivo CSV o Excel de la SSA", type=["csv", "xlsx"])
+    # Guía de Uso Directa (Arriba y visible)
+    st.markdown("### 📖 Guía de Uso")
+    st.markdown("""
+    **🔍 Buscador:** Escriba la denominación, sustancia activa o registro para filtrar la base vigente.
     
-    umbral = st.slider("2. Umbral de similitud (%)", min_value=60, max_value=100, value=85, 
-                       help="85% es recomendado para tolerar variaciones en la redacción de la SSA.")
+    **⚙️ Cruce SSA:**
+    1. Suba el archivo de la SSA.
+    2. Seleccione las columnas de *Clave* y *Descripción*.
+    3. Haga clic en *Ejecutar Análisis*.
+    """)
     
     st.markdown("---")
+    st.markdown("### ⚙️ Panel de Análisis (SSA)")
     
-    # Guía Rápida movida a la barra lateral
-    with st.expander("📖 Guía de Uso"):
-        st.markdown("""
-        **🔍 Buscador General:** Ideal para consultas rápidas. Escriba la denominación, sustancia activa o registro sanitario para filtrar la base vigente.
-        
-        **⚙️ Cruce de Datos SSA:** 1. Suba el archivo de la SSA.
-        2. Seleccione las columnas de *Clave* y *Descripción Completa*.
-        3. Haga clic en *Ejecutar Análisis*. La IA cruzará los textos y generará un archivo con la clasificación de "Fuente Única/Múltiple".
-        """)
+    # Cajón para subir archivo
+    archivo_ssa = st.file_uploader("Suba el archivo CSV o Excel", type=["csv", "xlsx"])
+    
+    umbral = st.slider("Umbral de similitud (%)", min_value=60, max_value=100, value=85, 
+                       help="85% es recomendado para tolerar variaciones en la redacción de la SSA.")
     
     # Firma Oficial
     st.markdown("---")
@@ -109,9 +108,10 @@ with st.sidebar:
 # ==========================================
 st.markdown("<h1>Visor Inteligente de Medicamentos</h1>", unsafe_allow_html=True)
 
-# Validar que el Parquet exista
+# Validar que el Parquet exista o mostrar el error real
 if df_cofepris is None:
-    st.error("🚨 No se encontró el archivo 'base_registros_sanitarios.parquet'. Asegúrese de que esté cargado en el repositorio de GitHub.")
+    st.error(f"🚨 Error al leer la base de datos. Detalle técnico: **{error_carga}**")
+    st.info("💡 Tip: Si el error dice 'Missing optional dependency pyarrow', ve a tu panel de control de Streamlit Cloud (share.streamlit.io), haz clic en los 3 puntitos de tu aplicación y selecciona 'Reboot' para que instale las nuevas librerías de tu requirements.txt.")
     st.stop()
 
 # Creación de Pestañas
@@ -125,17 +125,14 @@ with tab1:
     col1, col2 = st.columns(2)
     busqueda_libre = col1.text_input("Buscar por Denominación Distintiva, Genérica o Registro:")
     
-    # Lista de estados únicos (ignorando nulos)
     estados = df_cofepris['Estado'].dropna().unique().tolist()
     filtro_estado = col2.selectbox("Filtrar por Estado:", ["Todos"] + estados)
     
     df_mostrar = df_cofepris.copy()
     
-    # Aplicar filtro de estado
     if filtro_estado != "Todos":
         df_mostrar = df_mostrar[df_mostrar['Estado'] == filtro_estado]
         
-    # Aplicar búsqueda libre
     if busqueda_libre:
         mask = df_mostrar.astype(str).apply(lambda x: x.str.contains(busqueda_libre, case=False, na=False)).any(axis=1)
         df_mostrar = df_mostrar[mask]
@@ -148,18 +145,16 @@ with tab1:
 # ------------------------------------------
 with tab2:
     if archivo_ssa:
-        # Leer archivo según su extensión
         if archivo_ssa.name.endswith('.csv'):
             df_ssa = pd.read_csv(archivo_ssa, encoding='latin1', sep=None, engine='python') 
         else:
             df_ssa = pd.read_excel(archivo_ssa)
             
-        st.success("✅ Archivo SSA cargado correctamente. Configure las columnas para el cruce:")
+        st.success("✅ Archivo SSA cargado. Configure las columnas para el cruce:")
         
         col_c1, col_c2 = st.columns(2)
         columnas_ssa = df_ssa.columns.tolist()
         
-        # Selectores para identificar las columnas de interés
         col_clave = col_c1.selectbox("¿Qué columna tiene la Clave Compendio?", columnas_ssa)
         col_descripcion = col_c2.selectbox("¿Qué columna tiene la Descripción Completa?", columnas_ssa)
         
@@ -173,7 +168,6 @@ with tab2:
                 for index, row in df_ssa.iterrows():
                     query = str(row[col_descripcion])
                     
-                    # Fuzzy Matching: token_set_ratio ignora palabras extra y busca intersección de tokens
                     matches = process.extract(
                         query, 
                         df_cofepris['Busqueda_COFEPRIS'], 
@@ -203,26 +197,22 @@ with tab2:
                     resultados_fuente.append(tipo_fuente)
                     puntajes_confianza.append(round(mejor_puntaje, 1))
                 
-                # Anexar resultados al DataFrame de la SSA
                 df_ssa['Registros_Cofepris_Encontrados'] = resultados_registros
                 df_ssa['Tipo_Fuente'] = resultados_fuente
                 df_ssa['Similitud_Matematica_Maxima_%'] = puntajes_confianza
                 
                 st.success("¡Análisis Terminado con Éxito!")
                 
-                # Mostrar métricas resumen
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Fuente Única ✅", resultados_fuente.count('Fuente Única'))
                 m2.metric("Fuente Múltiple ⚠️", resultados_fuente.count('Fuente Múltiple'))
                 m3.metric("Sin Fuente ❌", resultados_fuente.count('Sin Fuente'))
                 
-                # Mostrar vista previa
                 st.dataframe(df_ssa)
                 
-                # Preparar descarga (usamos utf-8-sig para que Excel en Windows lea bien los acentos)
                 csv_resultado = df_ssa.to_csv(index=False).encode('utf-8-sig')
                 st.download_button(
-                    label="⬇️ Descargar Resultados para Compras Consolidadas",
+                    label="⬇️ Descargar Resultados",
                     data=csv_resultado,
                     file_name="Fuentes_Abasto_Analizadas.csv",
                     mime="text/csv"
