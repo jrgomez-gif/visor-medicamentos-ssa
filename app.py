@@ -70,11 +70,18 @@ def cargar_parquet():
         if 'FechaEmision' in df.columns:
             df['FechaEmision'] = pd.to_datetime(df['FechaEmision'], errors='coerce').dt.strftime('%d/%m/%Y')
             
-        # Motor de Búsqueda Oculto
-        df['Texto_Limpio_Generica'] = df['DenominacionGenerica'].apply(limpiar_texto_para_cruce)
-        df['Texto_Limpio_Forma'] = df['FormaFarmaceutica'].apply(limpiar_texto_para_cruce)
-        df['Texto_Limpio_Presentacion'] = df['Presentacion'].apply(limpiar_texto_para_cruce)
-        df['Busqueda_COFEPRIS'] = df['Texto_Limpio_Generica'] + " " + df['Texto_Limpio_Forma'] + " " + df['Texto_Limpio_Presentacion']
+        # Motor de Búsqueda Oculto (Mantenemos por seguridad si no se corre el jupyter, pero prioriza el del jupyter)
+        generica = df['DenominacionGenerica'] if 'DenominacionGenerica' in df.columns else ""
+        forma = df['FormaFarmaceutica'] if 'FormaFarmaceutica' in df.columns else ""
+        presentacion = df['Presentacion'] if 'Presentacion' in df.columns else ""
+        concentracion = df['FarmacoConcentracion'] if 'FarmacoConcentracion' in df.columns else ""
+        
+        df['Texto_Limpio_Generica'] = generica.apply(limpiar_texto_para_cruce)
+        df['Texto_Limpio_Forma'] = forma.apply(limpiar_texto_para_cruce)
+        df['Texto_Limpio_Presentacion'] = presentacion.apply(limpiar_texto_para_cruce)
+        df['Texto_Limpio_Concentracion'] = concentracion.apply(limpiar_texto_para_cruce)
+        
+        df['Busqueda_COFEPRIS'] = df['Texto_Limpio_Generica'] + " " + df['Texto_Limpio_Forma'] + " " + df['Texto_Limpio_Presentacion'] + " " + df['Texto_Limpio_Concentracion']
         
         return df, None
     except Exception as e:
@@ -98,7 +105,7 @@ with st.sidebar:
     
     **⚙️ Cruce SSA:**
     1. Suba el archivo de la SSA.
-    2. Configure columnas y ejecute el análisis.
+    2. Seleccione la columna de *Descripción* y ejecute el análisis.
     """)
     
     st.markdown("---")
@@ -124,7 +131,6 @@ tab1, tab2 = st.tabs(["🔍 Buscador General", "⚙️ Cruce de Datos (SSA)"])
 # PESTAÑA 1: BUSCADOR GENERAL
 # ------------------------------------------
 with tab1:
-    # Lógica de reseteo de filtros
     if 'reset' not in st.session_state:
         st.session_state.reset = False
 
@@ -136,7 +142,6 @@ with tab1:
         st.session_state.titular = "Todos"
 
     st.markdown("### 🎛️ Panel de Búsqueda y Filtros")
-    
     busqueda_libre = st.text_input("🔍 Búsqueda global:", key="busqueda")
     
     c1, c2, c3, c4 = st.columns(4)
@@ -153,7 +158,6 @@ with tab1:
     col_btn1, col_btn2, _ = st.columns([1, 1, 2])
     col_btn1.button("♻️ Limpiar Filtros", on_click=reset_filters)
 
-    # Filtrado
     df_mostrar = df_cofepris.copy()
     if filtro_estado != "Todos":
         df_mostrar = df_mostrar[df_mostrar['Estado'].astype(str).str.contains(filtro_estado, case=False, na=False)]
@@ -169,12 +173,11 @@ with tab1:
 
     st.markdown(f"**Resultados encontrados:** {len(df_mostrar)}")
     
-    columnas_excluidas = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Texto_Limpio_Presentacion', 'Busqueda_COFEPRIS', 'UUID', 'ClaveCompendio']
+    columnas_excluidas = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Texto_Limpio_Presentacion', 'Texto_Limpio_Concentracion', 'Busqueda_COFEPRIS', 'UUID', 'ClaveCompendio']
     df_final_vista = df_mostrar.drop(columns=columnas_excluidas, errors='ignore')
     
     st.dataframe(df_final_vista)
 
-    # Botón Descarga Excel Base Completa
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_final_vista.to_excel(writer, index=False, sheet_name='Registros_Sanitarios')
@@ -198,10 +201,8 @@ with tab2:
             df_ssa = pd.read_excel(archivo_ssa)
             
         st.success("✅ Archivo SSA cargado.")
-        col_c1, col_c2 = st.columns(2)
         columnas_ssa = df_ssa.columns.tolist()
-        col_clave = col_c1.selectbox("¿Columna Clave Compendio?", columnas_ssa)
-        col_descripcion = col_c2.selectbox("¿Columna Descripción Completa?", columnas_ssa)
+        col_descripcion = st.selectbox("¿Qué columna contiene la Descripción Completa del medicamento?", columnas_ssa)
         
         if st.button("Ejecutar Análisis de Fuentes"):
             with st.spinner("Analizando..."):
@@ -214,7 +215,9 @@ with tab2:
                         mejor_p = matches[0][1]
                         regs = df_cofepris.loc[idx, 'NumeroRegistro'].unique()
                         res_reg.append(", ".join(regs))
-                        res_fue.append("Fuente Única" if len(regs) == 1 else "Fuente Múltiple")
+                        
+                        # NUEVA REGLA RESPONSABLE PARA COMPRAS PÚBLICAS
+                        res_fue.append("Probable Fuente Única" if len(regs) == 1 else "Fuente Múltiple")
                     else:
                         res_reg.append("Sin registros")
                         res_fue.append("Sin Fuente")
@@ -227,7 +230,7 @@ with tab2:
                 
                 st.success("¡Terminado!")
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Fuente Única ✅", res_fue.count('Fuente Única'))
+                m1.metric("Probable Fuente Única ✅", res_fue.count('Probable Fuente Única'))
                 m2.metric("Fuente Múltiple ⚠️", res_fue.count('Fuente Múltiple'))
                 m3.metric("Sin Fuente ❌", res_fue.count('Sin Fuente'))
                 st.dataframe(df_ssa)
