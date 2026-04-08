@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from rapidfuzz import process, fuzz
 import re
+import io
 
 # ==========================================
 # 1. CONFIGURACIÓN DE PÁGINA Y TEMA
@@ -37,10 +38,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. FUNCIONES DE LIMPIEZA Y CARGA DE DATOS
+# 2. FUNCIONES DE LIMPIEZA Y CARGA
 # ==========================================
 def limpiar_texto_para_cruce(texto):
-    """Limpieza profunda EN SEGUNDO PLANO solo para el motor matemático."""
     if pd.isna(texto): return ""
     t = str(texto).lower().replace('/', ' ').replace('-', ' ')
     t = re.sub(r'[^a-z0-9ñáéíóú\s]', ' ', t)
@@ -49,9 +49,7 @@ def limpiar_texto_para_cruce(texto):
     return " ".join(t.split())
 
 def limpiar_vista_generica(texto):
-    """Limpieza VISUAL para que el usuario vea la Denominación Genérica de forma correcta."""
     if pd.isna(texto): return ""
-    # Separa por diagonales, quita espacios, elimina los vacíos y vuelve a unir con una sola diagonal
     partes = [p.strip() for p in str(texto).split('/') if p.strip()]
     return " / ".join(partes)
 
@@ -60,31 +58,22 @@ def cargar_parquet():
     try:
         df = pd.read_parquet("base_registros_sanitarios.parquet")
         
-        # --- 1. LIMPIEZA VISUAL PARA EL USUARIO ---
+        # Limpieza Visual
         if 'DenominacionGenerica' in df.columns:
             df['DenominacionGenerica'] = df['DenominacionGenerica'].apply(limpiar_vista_generica)
-            
         if 'Presentacion' in df.columns:
-            # Quita espacios dobles que a veces vienen de origen
             df['Presentacion'] = df['Presentacion'].astype(str).str.replace(r'\s+', ' ', regex=True).str.strip()
-            
-        # --- 2. CORRECCIÓN DE VARIABLES AL VUELO ---
+        
+        # Renombrar y Formatear
         if 'VistaAdministracion' in df.columns:
             df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
-            
         if 'FechaEmision' in df.columns:
             df['FechaEmision'] = pd.to_datetime(df['FechaEmision'], errors='coerce').dt.strftime('%d/%m/%Y')
             
-        # --- 3. LIMPIEZA OCULTA PARA EL ALGORITMO ---
-        # Asegurarnos de que las variables existan para evitar errores
-        generica = df['DenominacionGenerica'] if 'DenominacionGenerica' in df.columns else ""
-        forma = df['FormaFarmaceutica'] if 'FormaFarmaceutica' in df.columns else ""
-        presentacion = df['Presentacion'] if 'Presentacion' in df.columns else ""
-        
-        df['Texto_Limpio_Generica'] = generica.apply(limpiar_texto_para_cruce)
-        df['Texto_Limpio_Forma'] = forma.apply(limpiar_texto_para_cruce)
-        df['Texto_Limpio_Presentacion'] = presentacion.apply(limpiar_texto_para_cruce)
-        
+        # Motor de Búsqueda Oculto
+        df['Texto_Limpio_Generica'] = df['DenominacionGenerica'].apply(limpiar_texto_para_cruce)
+        df['Texto_Limpio_Forma'] = df['FormaFarmaceutica'].apply(limpiar_texto_para_cruce)
+        df['Texto_Limpio_Presentacion'] = df['Presentacion'].apply(limpiar_texto_para_cruce)
         df['Busqueda_COFEPRIS'] = df['Texto_Limpio_Generica'] + " " + df['Texto_Limpio_Forma'] + " " + df['Texto_Limpio_Presentacion']
         
         return df, None
@@ -105,12 +94,11 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📖 Guía de Uso")
     st.markdown("""
-    **🔍 Buscador:** Escriba la denominación, sustancia o use los filtros para explorar la base vigente.
+    **🔍 Buscador:** Use filtros para explorar la base vigente.
     
     **⚙️ Cruce SSA:**
     1. Suba el archivo de la SSA.
-    2. Seleccione las columnas de *Clave* y *Descripción*.
-    3. Haga clic en *Ejecutar Análisis*.
+    2. Configure columnas y ejecute el análisis.
     """)
     
     st.markdown("---")
@@ -133,27 +121,40 @@ if df_cofepris is None:
 tab1, tab2 = st.tabs(["🔍 Buscador General", "⚙️ Cruce de Datos (SSA)"])
 
 # ------------------------------------------
-# PESTAÑA 1: BUSCADOR GENERAL CON FILTROS
+# PESTAÑA 1: BUSCADOR GENERAL
 # ------------------------------------------
 with tab1:
+    # Lógica de reseteo de filtros
+    if 'reset' not in st.session_state:
+        st.session_state.reset = False
+
+    def reset_filters():
+        st.session_state.busqueda = ""
+        st.session_state.estado = "Todos"
+        st.session_state.forma = "Todas"
+        st.session_state.tipo = "Todos"
+        st.session_state.titular = "Todos"
+
     st.markdown("### 🎛️ Panel de Búsqueda y Filtros")
     
-    busqueda_libre = st.text_input("🔍 Búsqueda global (Denominación, Genérica o No. Registro):")
+    busqueda_libre = st.text_input("🔍 Búsqueda global:", key="busqueda")
     
     c1, c2, c3, c4 = st.columns(4)
-    
     estados_validos = ["Todos", "VIGENTE", "CANCELADO", "REVOCADO"]
     formas_unicas = ["Todas"] + sorted(df_cofepris['FormaFarmaceutica'].dropna().unique().tolist())
     tipos_unicos = ["Todos"] + sorted(df_cofepris['TipoMedicamento'].dropna().unique().tolist())
     titulares_unicos = ["Todos"] + sorted(df_cofepris['Titular'].dropna().unique().tolist())
     
-    filtro_estado = c1.selectbox("Estado:", estados_validos)
-    filtro_forma = c2.selectbox("Forma Farmacéutica:", formas_unicas)
-    filtro_tipo = c3.selectbox("Tipo de Medicamento:", tipos_unicos)
-    filtro_titular = c4.selectbox("Titular del Registro:", titulares_unicos)
-    
+    filtro_estado = c1.selectbox("Estado:", estados_validos, key="estado")
+    filtro_forma = c2.selectbox("Forma Farmacéutica:", formas_unicas, key="forma")
+    filtro_tipo = c3.selectbox("Tipo de Medicamento:", tipos_unicos, key="tipo")
+    filtro_titular = c4.selectbox("Titular del Registro:", titulares_unicos, key="titular")
+
+    col_btn1, col_btn2, _ = st.columns([1, 1, 2])
+    col_btn1.button("♻️ Limpiar Filtros", on_click=reset_filters)
+
+    # Filtrado
     df_mostrar = df_cofepris.copy()
-    
     if filtro_estado != "Todos":
         df_mostrar = df_mostrar[df_mostrar['Estado'].astype(str).str.contains(filtro_estado, case=False, na=False)]
     if filtro_forma != "Todas":
@@ -162,19 +163,29 @@ with tab1:
         df_mostrar = df_mostrar[df_mostrar['TipoMedicamento'] == filtro_tipo]
     if filtro_titular != "Todos":
         df_mostrar = df_mostrar[df_mostrar['Titular'] == filtro_titular]
-        
     if busqueda_libre:
         mask = df_mostrar.astype(str).apply(lambda x: x.str.contains(busqueda_libre, case=False, na=False)).any(axis=1)
         df_mostrar = df_mostrar[mask]
-        
-    st.markdown(f"**Resultados encontrados:** {len(df_mostrar)} registros")
+
+    st.markdown(f"**Resultados encontrados:** {len(df_mostrar)}")
     
-    # Ocultar variables técnicas y no deseadas
-    columnas_ocultas = [
-        'Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Texto_Limpio_Presentacion', 'Busqueda_COFEPRIS',
-        'UUID', 'ClaveCompendio'
-    ]
-    st.dataframe(df_mostrar.drop(columns=columnas_ocultas, errors='ignore'))
+    columnas_excluidas = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Texto_Limpio_Presentacion', 'Busqueda_COFEPRIS', 'UUID', 'ClaveCompendio']
+    df_final_vista = df_mostrar.drop(columns=columnas_excluidas, errors='ignore')
+    
+    st.dataframe(df_final_vista)
+
+    # Botón Descarga Excel Base Completa
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_final_vista.to_excel(writer, index=False, sheet_name='Registros_Sanitarios')
+    processed_data = output.getvalue()
+
+    col_btn2.download_button(
+        label="📥 Descargar Excel (Visible)",
+        data=processed_data,
+        file_name="Cofepris_Registros_Vigentes.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 # ------------------------------------------
 # PESTAÑA 2: CRUCE DE DATOS (SSA)
@@ -186,72 +197,42 @@ with tab2:
         else:
             df_ssa = pd.read_excel(archivo_ssa)
             
-        st.success("✅ Archivo SSA cargado. Configure las columnas para el cruce:")
-        
+        st.success("✅ Archivo SSA cargado.")
         col_c1, col_c2 = st.columns(2)
         columnas_ssa = df_ssa.columns.tolist()
+        col_clave = col_c1.selectbox("¿Columna Clave Compendio?", columnas_ssa)
+        col_descripcion = col_c2.selectbox("¿Columna Descripción Completa?", columnas_ssa)
         
-        col_clave = col_c1.selectbox("¿Qué columna tiene la Clave Compendio?", columnas_ssa)
-        col_descripcion = col_c2.selectbox("¿Qué columna tiene la Descripción Completa?", columnas_ssa)
-        
-        if st.button("Ejecutar Análisis de Fuentes de Abasto"):
-            with st.spinner("Comparando catálogos con inteligencia matemática... esto puede tomar un par de minutos."):
-                
-                resultados_registros = []
-                resultados_fuente = []
-                puntajes_confianza = []
-                
+        if st.button("Ejecutar Análisis de Fuentes"):
+            with st.spinner("Analizando..."):
+                res_reg, res_fue, res_score = [], [], []
                 for index, row in df_ssa.iterrows():
                     query = limpiar_texto_para_cruce(str(row[col_descripcion]))
-                    
-                    matches = process.extract(
-                        query, 
-                        df_cofepris['Busqueda_COFEPRIS'], 
-                        scorer=fuzz.token_set_ratio, 
-                        limit=None, 
-                        score_cutoff=umbral
-                    )
-                    
+                    matches = process.extract(query, df_cofepris['Busqueda_COFEPRIS'], scorer=fuzz.token_set_ratio, limit=None, score_cutoff=umbral)
                     if matches:
-                        indices = [match[2] for match in matches]
-                        mejor_puntaje = matches[0][1]
-                        registros_encontrados = df_cofepris.loc[indices, 'NumeroRegistro'].unique()
-                        
-                        cantidad = len(registros_encontrados)
-                        texto_registros = ", ".join(registros_encontrados)
-                        
-                        if cantidad == 1:
-                            tipo_fuente = "Fuente Única"
-                        elif cantidad > 1:
-                            tipo_fuente = "Fuente Múltiple"
+                        idx = [m[2] for m in matches]
+                        mejor_p = matches[0][1]
+                        regs = df_cofepris.loc[idx, 'NumeroRegistro'].unique()
+                        res_reg.append(", ".join(regs))
+                        res_fue.append("Fuente Única" if len(regs) == 1 else "Fuente Múltiple")
                     else:
-                        texto_registros = "Sin registros"
-                        tipo_fuente = "Sin Fuente"
-                        mejor_puntaje = 0
-                        
-                    resultados_registros.append(texto_registros)
-                    resultados_fuente.append(tipo_fuente)
-                    puntajes_confianza.append(round(mejor_puntaje, 1))
+                        res_reg.append("Sin registros")
+                        res_fue.append("Sin Fuente")
+                        mejor_p = 0
+                    res_score.append(round(mejor_p, 1))
                 
-                df_ssa['Registros_Cofepris_Encontrados'] = resultados_registros
-                df_ssa['Tipo_Fuente'] = resultados_fuente
-                df_ssa['Similitud_Matematica_Maxima_%'] = puntajes_confianza
+                df_ssa['Registros_Cofepris'] = res_reg
+                df_ssa['Tipo_Fuente'] = res_fue
+                df_ssa['Similitud_%'] = res_score
                 
-                st.success("¡Análisis Terminado con Éxito!")
-                
+                st.success("¡Terminado!")
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Fuente Única ✅", resultados_fuente.count('Fuente Única'))
-                m2.metric("Fuente Múltiple ⚠️", resultados_fuente.count('Fuente Múltiple'))
-                m3.metric("Sin Fuente ❌", resultados_fuente.count('Sin Fuente'))
-                
+                m1.metric("Fuente Única ✅", res_fue.count('Fuente Única'))
+                m2.metric("Fuente Múltiple ⚠️", res_fue.count('Fuente Múltiple'))
+                m3.metric("Sin Fuente ❌", res_fue.count('Sin Fuente'))
                 st.dataframe(df_ssa)
                 
-                csv_resultado = df_ssa.to_csv(index=False).encode('utf-8-sig')
-                st.download_button(
-                    label="⬇️ Descargar Resultados",
-                    data=csv_resultado,
-                    file_name="Fuentes_Abasto_Analizadas.csv",
-                    mime="text/csv"
-                )
+                csv_out = df_ssa.to_csv(index=False).encode('utf-8-sig')
+                st.download_button(label="⬇️ Descargar Resultados", data=csv_out, file_name="Fuentes_SSA_Analizadas.csv", mime="text/csv")
     else:
-        st.info("👈 Por favor, suba el archivo de la SSA en la barra lateral para comenzar.")
+        st.info("👈 Suba el archivo de la SSA en la barra lateral.")
