@@ -92,36 +92,33 @@ with tab1:
 # ------------------------------------------
 with tab2:
     if archivo_ssa:
-        # Leer el archivo dependiendo de su formato
         if archivo_ssa.name.endswith('.csv'):
-            df_ssa = pd.read_csv(archivo_ssa, encoding='latin1') # latin1 o utf-8 dependiendo de como lo guarde SSA
+            # Usamos separador de tabulaciones '\t' o comas ',' según venga el archivo
+            df_ssa = pd.read_csv(archivo_ssa, encoding='latin1', sep=None, engine='python') 
         else:
             df_ssa = pd.read_excel(archivo_ssa)
             
-        st.success("Archivo SSA cargado correctamente. Seleccione las columnas para el cruce:")
+        st.success("Archivo SSA cargado correctamente. Configure el cruce:")
         
-        # Selectores dinámicos de columnas
-        col_c1, col_c2, col_c3 = st.columns(3)
+        # Como vimos en los datos reales, todo viene en una sola descripción
+        col_c1, col_c2 = st.columns(2)
         columnas_ssa = df_ssa.columns.tolist()
         
-        col_clave = col_c1.selectbox("Columna: Clave Compendio", columnas_ssa)
-        col_activo = col_c2.selectbox("Columna: Principio Activo", columnas_ssa)
-        col_pres = col_c3.selectbox("Columna: Presentación", columnas_ssa)
+        col_clave = col_c1.selectbox("¿Qué columna tiene la Clave?", columnas_ssa)
+        col_descripcion = col_c2.selectbox("¿Qué columna tiene la Descripción Completa?", columnas_ssa)
         
         if st.button("Ejecutar Análisis de Fuentes de Abasto"):
-            with st.spinner("Comparando bases de datos con inteligencia matemática... esto puede tomar un par de minutos."):
-                
-                # Preparamos la búsqueda combinada de la SSA
-                df_ssa['Busqueda_SSA'] = df_ssa[col_activo].astype(str) + " " + df_ssa[col_pres].astype(str)
+            with st.spinner("Procesando descripciones largas con inteligencia matemática..."):
                 
                 resultados_registros = []
                 resultados_fuente = []
+                puntajes_confianza = []
                 
-                # Función principal de Fuzzy Matching
                 for index, row in df_ssa.iterrows():
-                    query = row['Busqueda_SSA']
+                    # Tomamos la celda completa de la SSA (ej. "VARENICLINA. TABLETA. Cada tableta...")
+                    query = str(row[col_descripcion])
                     
-                    # Extraer coincidencias que superen el umbral usando token_set_ratio (ignora el orden de las palabras)
+                    # token_set_ratio buscará la intersección de palabras clave ignorando el ruido
                     matches = process.extract(
                         query, 
                         df_cofepris['Busqueda_COFEPRIS'], 
@@ -131,8 +128,8 @@ with tab2:
                     )
                     
                     if matches:
-                        # matches devuelve una lista de tuplas (texto_coincidente, score, indice_en_df)
                         indices = [match[2] for match in matches]
+                        mejor_puntaje = matches[0][1] # El puntaje de la mejor coincidencia
                         registros_encontrados = df_cofepris.loc[indices, 'NumeroRegistro'].unique()
                         
                         cantidad = len(registros_encontrados)
@@ -145,37 +142,33 @@ with tab2:
                     else:
                         texto_registros = "Sin registros"
                         tipo_fuente = "Sin Fuente"
+                        mejor_puntaje = 0
                         
                     resultados_registros.append(texto_registros)
                     resultados_fuente.append(tipo_fuente)
+                    puntajes_confianza.append(round(mejor_puntaje, 1))
                 
-                # Agregamos las nuevas columnas al Excel de la SSA
+                # Agregamos las nuevas variables al Excel de la SSA
                 df_ssa['Registros_Cofepris_Encontrados'] = resultados_registros
                 df_ssa['Tipo_Fuente'] = resultados_fuente
-                
-                # Limpiamos columnas temporales
-                df_ssa = df_ssa.drop(columns=['Busqueda_SSA'])
+                df_ssa['Similitud_Matematica_Maxima_%'] = puntajes_confianza
                 
                 st.success("¡Análisis Terminado!")
                 
-                # Mostramos métricas
-                f_unica = resultados_fuente.count('Fuente Única')
-                f_mult = resultados_fuente.count('Fuente Múltiple')
-                s_fuente = resultados_fuente.count('Sin Fuente')
-                
+                # Métricas visuales
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Fuente Única", f_unica)
-                m2.metric("Fuente Múltiple", f_mult)
-                m3.metric("Sin Fuente", s_fuente)
+                m1.metric("Fuente Única ✅", resultados_fuente.count('Fuente Única'))
+                m2.metric("Fuente Múltiple ⚠️", resultados_fuente.count('Fuente Múltiple'))
+                m3.metric("Sin Fuente ❌", resultados_fuente.count('Sin Fuente'))
                 
                 st.dataframe(df_ssa)
                 
                 # Botón de descarga
                 csv_resultado = df_ssa.to_csv(index=False).encode('latin1', errors='replace')
                 st.download_button(
-                    label="⬇️ Descargar Resultados en CSV",
+                    label="⬇️ Descargar Resultados para Compras Consolidadas",
                     data=csv_resultado,
-                    file_name="Analisis_Fuentes_Abasto.csv",
+                    file_name="Fuentes_Abasto_Analizadas.csv",
                     mime="text/csv"
                 )
     else:
