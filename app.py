@@ -82,32 +82,32 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("## ⚙️ Panel de Análisis (SSA)")
     
-    # Cajón para subir archivo (ahora visible)
+    # Cajón para subir archivo
     archivo_ssa = st.file_uploader("1. Suba el archivo CSV o Excel de la SSA", type=["csv", "xlsx"])
     
     umbral = st.slider("2. Umbral de similitud (%)", min_value=60, max_value=100, value=85, 
                        help="85% es recomendado para tolerar variaciones en la redacción de la SSA.")
+    
+    st.markdown("---")
+    
+    # Guía Rápida movida a la barra lateral
+    with st.expander("📖 Guía de Uso"):
+        st.markdown("""
+        **🔍 Buscador General:** Ideal para consultas rápidas. Escriba la denominación, sustancia activa o registro sanitario para filtrar la base vigente.
+        
+        **⚙️ Cruce de Datos SSA:** 1. Suba el archivo de la SSA.
+        2. Seleccione las columnas de *Clave* y *Descripción Completa*.
+        3. Haga clic en *Ejecutar Análisis*. La IA cruzará los textos y generará un archivo con la clasificación de "Fuente Única/Múltiple".
+        """)
     
     # Firma Oficial
     st.markdown("---")
     st.markdown("<div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Trámites Electrónicos COFEPRIS<br>Centro de Datos V1.0</div>", unsafe_allow_html=True)
 
 # ==========================================
-# 4. PANTALLA PRINCIPAL Y GUÍA DE USO
+# 4. PANTALLA PRINCIPAL
 # ==========================================
 st.markdown("<h1>Visor Inteligente de Medicamentos</h1>", unsafe_allow_html=True)
-
-# Guía Rápida (Acordeón)
-with st.expander("📖 Guía Rápida de Uso (Clic para desplegar/ocultar)"):
-    st.markdown("""
-    **Bienvenido al Visor Inteligente de Registros Sanitarios.** Esta herramienta cuenta con dos módulos:
-
-    * **🔍 Buscador General (Pestaña 1):** Ideal para consultas rápidas. Escriba la denominación, sustancia activa o el número de registro sanitario para filtrar la base de datos vigente de COFEPRIS.
-    * **⚙️ Cruce de Datos SSA (Pestaña 2):** Herramienta analítica para identificar fuentes de abasto (Compras Consolidadas).
-        1. Suba el archivo de la SSA en el panel izquierdo.
-        2. Seleccione las columnas correspondientes a la *Clave* y la *Descripción Completa*.
-        3. Haga clic en *Ejecutar Análisis*. La inteligencia matemática cruzará los textos y generará un archivo descargable con las clasificaciones de "Fuente Única" o "Fuente Múltiple".
-    """)
 
 # Validar que el Parquet exista
 if df_cofepris is None:
