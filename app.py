@@ -1,20 +1,16 @@
 import streamlit as st
 import pandas as pd
 from rapidfuzz import process, fuzz
-import time
+import re
 
 # ==========================================
 # 1. CONFIGURACIÓN DE PÁGINA Y TEMA
 # ==========================================
 st.set_page_config(page_title="Visor COFEPRIS", page_icon="🇲🇽", layout="wide")
 
-# CSS Institucional y corrección del File Uploader
 st.markdown("""
     <style>
-    /* Color de fondo de la barra lateral (Verde Oscuro) */
     [data-testid="stSidebar"] { background-color: #13322B; }
-    
-    /* Textos básicos de la barra lateral a blanco */
     [data-testid="stSidebar"] .stMarkdown p, 
     [data-testid="stSidebar"] h1, 
     [data-testid="stSidebar"] h2, 
@@ -22,67 +18,60 @@ st.markdown("""
     [data-testid="stSidebar"] label,
     [data-testid="stSidebar"] li { color: white !important; }
     
-    /* --- ARREGLO DEL CAJÓN DE SUBIR ARCHIVOS --- */
     [data-testid="stFileUploadDropzone"] {
         background-color: rgba(255, 255, 255, 0.1) !important; 
         border: 1px dashed rgba(255, 255, 255, 0.5) !important;
     }
-    [data-testid="stFileUploadDropzone"] * {
-        color: white !important; 
-    }
+    [data-testid="stFileUploadDropzone"] * { color: white !important; }
     [data-testid="stFileUploadDropzone"] button {
         background-color: #B38E5D !important;
         color: white !important;
         border: none !important;
     }
-    [data-testid="stFileUploadDropzone"] button:hover {
-        background-color: #6F1827 !important;
-    }
+    [data-testid="stFileUploadDropzone"] button:hover { background-color: #6F1827 !important; }
 
-    /* Estilos del Gobierno para el título principal */
     h1 { color: #6F1827; border-bottom: 2px solid #B38E5D; padding-bottom: 10px; }
-    
-    /* Botones dorados principales */
     .stButton>button { background-color: #B38E5D; color: white; border: none; width: 100%; }
     .stButton>button:hover { background-color: #6F1827; color: white; }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. CARGA DE DATOS COFEPRIS (PARQUET) CON DEBUG
+# 2. FUNCIONES Y CARGA DE DATOS
 # ==========================================
+def limpiar_texto_para_cruce(texto):
+    """Limpia el texto de la SSA al vuelo para poder cruzarlo."""
+    if pd.isna(texto): return ""
+    t = str(texto).lower().replace('/', ' ').replace('-', ' ')
+    t = re.sub(r'[^a-z0-9ñáéíóú\s]', ' ', t)
+    stopwords = r'\b(caja|carton|cartón|envase|burbuja|frasco|ampula|ámpula|con|que|contiene|cada|de|en|el|la|los|las|un|una|para|instructivo|anexo|o|y)\b'
+    t = re.sub(stopwords, ' ', t)
+    return " ".join(t.split())
+
 @st.cache_data
 def cargar_parquet():
     try:
+        # Ahora el Parquet ya viene limpio desde tu computadora
         df = pd.read_parquet("base_registros_sanitarios.parquet")
-        # Rellenar valores nulos para evitar errores
-        df['DenominacionGenerica'] = df['DenominacionGenerica'].fillna('')
-        df['Presentacion'] = df['Presentacion'].fillna('')
-        # Crear columna de búsqueda combinada
-        df['Busqueda_COFEPRIS'] = df['DenominacionGenerica'].astype(str) + " " + df['Presentacion'].astype(str)
         return df, None
     except Exception as e:
-        # Si falla, devolvemos el error exacto para saber qué pasa
         return None, str(e)
 
 df_cofepris, error_carga = cargar_parquet()
 
 # ==========================================
-# 3. BARRA LATERAL (SIDEBAR) Y FIRMA
+# 3. BARRA LATERAL (SIDEBAR)
 # ==========================================
 with st.sidebar:
-    # Intentar cargar el logo
     try:
         st.image("COFEPRIS.png", use_container_width=True)
     except:
         st.caption("Cofepris - Buscador")
     
     st.markdown("---")
-    
-    # Guía de Uso Directa (Arriba y visible)
     st.markdown("### 📖 Guía de Uso")
     st.markdown("""
-    **🔍 Buscador:** Escriba la denominación, sustancia activa o registro para filtrar la base vigente.
+    **🔍 Buscador:** Escriba la denominación, sustancia o use los filtros para explorar la base vigente.
     
     **⚙️ Cruce SSA:**
     1. Suba el archivo de la SSA.
@@ -92,14 +81,9 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### ⚙️ Panel de Análisis (SSA)")
-    
-    # Cajón para subir archivo
     archivo_ssa = st.file_uploader("Suba el archivo CSV o Excel", type=["csv", "xlsx"])
+    umbral = st.slider("Umbral de similitud (%)", min_value=50, max_value=100, value=80)
     
-    umbral = st.slider("Umbral de similitud (%)", min_value=60, max_value=100, value=85, 
-                       help="85% es recomendado para tolerar variaciones en la redacción de la SSA.")
-    
-    # Firma Oficial
     st.markdown("---")
     st.markdown("<div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Trámites Electrónicos COFEPRIS<br>Centro de Datos V1.0</div>", unsafe_allow_html=True)
 
@@ -108,37 +92,56 @@ with st.sidebar:
 # ==========================================
 st.markdown("<h1>Visor Inteligente de Medicamentos</h1>", unsafe_allow_html=True)
 
-# Validar que el Parquet exista o mostrar el error real
 if df_cofepris is None:
-    st.error(f"🚨 Error al leer la base de datos. Detalle técnico: **{error_carga}**")
-    st.info("💡 Tip: Si el error dice 'Missing optional dependency pyarrow', ve a tu panel de control de Streamlit Cloud (share.streamlit.io), haz clic en los 3 puntitos de tu aplicación y selecciona 'Reboot' para que instale las nuevas librerías de tu requirements.txt.")
+    st.error(f"🚨 Error al leer la base de datos: **{error_carga}**")
     st.stop()
 
-# Creación de Pestañas
 tab1, tab2 = st.tabs(["🔍 Buscador General", "⚙️ Cruce de Datos (SSA)"])
 
 # ------------------------------------------
-# PESTAÑA 1: BUSCADOR GENERAL
+# PESTAÑA 1: BUSCADOR GENERAL CON FILTROS
 # ------------------------------------------
 with tab1:
-    st.markdown("### Base de Datos Activa")
-    col1, col2 = st.columns(2)
-    busqueda_libre = col1.text_input("Buscar por Denominación Distintiva, Genérica o Registro:")
+    st.markdown("### 🎛️ Panel de Búsqueda y Filtros")
     
-    estados = df_cofepris['Estado'].dropna().unique().tolist()
-    filtro_estado = col2.selectbox("Filtrar por Estado:", ["Todos"] + estados)
+    # Fila 1: Búsqueda libre
+    busqueda_libre = st.text_input("🔍 Búsqueda global (Denominación, Genérica o No. Registro):")
     
+    # Fila 2: Filtros desplegables en 4 columnas
+    c1, c2, c3, c4 = st.columns(4)
+    
+    # Extraer valores únicos limpios para los filtros
+    estados_validos = ["Todos", "VIGENTE", "CANCELADO", "REVOCADO"]
+    formas_unicas = ["Todas"] + sorted(df_cofepris['FormaFarmaceutica'].dropna().unique().tolist())
+    tipos_unicos = ["Todos"] + sorted(df_cofepris['TipoMedicamento'].dropna().unique().tolist())
+    titulares_unicos = ["Todos"] + sorted(df_cofepris['Titular'].dropna().unique().tolist())
+    
+    filtro_estado = c1.selectbox("Estado:", estados_validos)
+    filtro_forma = c2.selectbox("Forma Farmacéutica:", formas_unicas)
+    filtro_tipo = c3.selectbox("Tipo de Medicamento:", tipos_unicos)
+    filtro_titular = c4.selectbox("Titular del Registro:", titulares_unicos)
+    
+    # Aplicar lógica de filtrado
     df_mostrar = df_cofepris.copy()
     
     if filtro_estado != "Todos":
-        df_mostrar = df_mostrar[df_mostrar['Estado'] == filtro_estado]
+        df_mostrar = df_mostrar[df_mostrar['Estado'].astype(str).str.contains(filtro_estado, case=False, na=False)]
+    if filtro_forma != "Todas":
+        df_mostrar = df_mostrar[df_mostrar['FormaFarmaceutica'] == filtro_forma]
+    if filtro_tipo != "Todos":
+        df_mostrar = df_mostrar[df_mostrar['TipoMedicamento'] == filtro_tipo]
+    if filtro_titular != "Todos":
+        df_mostrar = df_mostrar[df_mostrar['Titular'] == filtro_titular]
         
     if busqueda_libre:
         mask = df_mostrar.astype(str).apply(lambda x: x.str.contains(busqueda_libre, case=False, na=False)).any(axis=1)
         df_mostrar = df_mostrar[mask]
         
-    st.write(f"Mostrando **{len(df_mostrar)}** registros:")
-    st.dataframe(df_mostrar[['NumeroRegistro', 'DenominacionDistintiva', 'DenominacionGenerica', 'Presentacion', 'Estado', 'Titular']])
+    st.markdown(f"**Resultados encontrados:** {len(df_mostrar)} registros")
+    
+    # Ocultar columnas técnicas generadas en el backend
+    columnas_ocultas = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Texto_Limpio_Presentacion', 'Busqueda_COFEPRIS']
+    st.dataframe(df_mostrar.drop(columns=columnas_ocultas, errors='ignore'))
 
 # ------------------------------------------
 # PESTAÑA 2: CRUCE DE DATOS (SSA)
@@ -159,14 +162,15 @@ with tab2:
         col_descripcion = col_c2.selectbox("¿Qué columna tiene la Descripción Completa?", columnas_ssa)
         
         if st.button("Ejecutar Análisis de Fuentes de Abasto"):
-            with st.spinner("Procesando descripciones largas con inteligencia matemática... esto puede tomar un par de minutos."):
+            with st.spinner("Comparando catálogos con inteligencia matemática... esto puede tomar un par de minutos."):
                 
                 resultados_registros = []
                 resultados_fuente = []
                 puntajes_confianza = []
                 
                 for index, row in df_ssa.iterrows():
-                    query = str(row[col_descripcion])
+                    # Limpiamos el texto completo de la SSA al vuelo
+                    query = limpiar_texto_para_cruce(str(row[col_descripcion]))
                     
                     matches = process.extract(
                         query, 
