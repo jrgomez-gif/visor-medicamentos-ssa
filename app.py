@@ -235,7 +235,17 @@ with tab2:
                 m3.metric("Sin Fuente ❌", res_fue.count('Sin Fuente'))
                 st.dataframe(df_ssa)
                 
-                csv_out = df_ssa.to_csv(index=False).encode('utf-8-sig')
-                st.download_button(label="⬇️ Descargar Resultados", data=csv_out, file_name="Fuentes_SSA_Analizadas.csv", mime="text/csv")
+                # Preparar descarga en Excel (Formato Ejecutivo)
+                output_ssa = io.BytesIO()
+                with pd.ExcelWriter(output_ssa, engine='openpyxl') as writer:
+                    df_ssa.to_excel(writer, index=False, sheet_name='Analisis_Fuentes')
+                excel_ssa = output_ssa.getvalue()
+                
+                st.download_button(
+                    label="⬇️ Descargar Resultados en Excel",
+                    data=excel_ssa,
+                    file_name="Analisis_Mercado_SSA.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
     else:
         st.info("👈 Suba el archivo de la SSA en la barra lateral.")
