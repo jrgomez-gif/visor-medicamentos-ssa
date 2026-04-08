@@ -40,7 +40,6 @@ st.markdown("""
 # 2. FUNCIONES Y CARGA DE DATOS
 # ==========================================
 def limpiar_texto_para_cruce(texto):
-    """Limpia el texto de la SSA al vuelo para poder cruzarlo."""
     if pd.isna(texto): return ""
     t = str(texto).lower().replace('/', ' ').replace('-', ' ')
     t = re.sub(r'[^a-z0-9ñáéíóú\s]', ' ', t)
@@ -51,8 +50,18 @@ def limpiar_texto_para_cruce(texto):
 @st.cache_data
 def cargar_parquet():
     try:
-        # Ahora el Parquet ya viene limpio desde tu computadora
         df = pd.read_parquet("base_registros_sanitarios.parquet")
+        
+        # --- CORRECCIÓN DE VARIABLES AL VUELO ---
+        # 1. Renombrar "VistaAdministracion" a "ViaAdministracion"
+        if 'VistaAdministracion' in df.columns:
+            df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
+            
+        # 2. Formato de fecha a DD/MM/AAAA
+        if 'FechaEmision' in df.columns:
+            df['FechaEmision'] = pd.to_datetime(df['FechaEmision'], errors='coerce').dt.strftime('%d/%m/%Y')
+        # ----------------------------------------
+        
         return df, None
     except Exception as e:
         return None, str(e)
@@ -104,13 +113,10 @@ tab1, tab2 = st.tabs(["🔍 Buscador General", "⚙️ Cruce de Datos (SSA)"])
 with tab1:
     st.markdown("### 🎛️ Panel de Búsqueda y Filtros")
     
-    # Fila 1: Búsqueda libre
     busqueda_libre = st.text_input("🔍 Búsqueda global (Denominación, Genérica o No. Registro):")
     
-    # Fila 2: Filtros desplegables en 4 columnas
     c1, c2, c3, c4 = st.columns(4)
     
-    # Extraer valores únicos limpios para los filtros
     estados_validos = ["Todos", "VIGENTE", "CANCELADO", "REVOCADO"]
     formas_unicas = ["Todas"] + sorted(df_cofepris['FormaFarmaceutica'].dropna().unique().tolist())
     tipos_unicos = ["Todos"] + sorted(df_cofepris['TipoMedicamento'].dropna().unique().tolist())
@@ -121,7 +127,6 @@ with tab1:
     filtro_tipo = c3.selectbox("Tipo de Medicamento:", tipos_unicos)
     filtro_titular = c4.selectbox("Titular del Registro:", titulares_unicos)
     
-    # Aplicar lógica de filtrado
     df_mostrar = df_cofepris.copy()
     
     if filtro_estado != "Todos":
@@ -139,8 +144,12 @@ with tab1:
         
     st.markdown(f"**Resultados encontrados:** {len(df_mostrar)} registros")
     
-    # Ocultar columnas técnicas generadas en el backend
-    columnas_ocultas = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Texto_Limpio_Presentacion', 'Busqueda_COFEPRIS']
+    # --- OCULTAR COLUMNAS AL USUARIO FINAL ---
+    # Aquí añadimos UUID y ClaveCompendio para que no se muestren en pantalla
+    columnas_ocultas = [
+        'Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Texto_Limpio_Presentacion', 'Busqueda_COFEPRIS',
+        'UUID', 'ClaveCompendio'
+    ]
     st.dataframe(df_mostrar.drop(columns=columnas_ocultas, errors='ignore'))
 
 # ------------------------------------------
@@ -169,7 +178,6 @@ with tab2:
                 puntajes_confianza = []
                 
                 for index, row in df_ssa.iterrows():
-                    # Limpiamos el texto completo de la SSA al vuelo
                     query = limpiar_texto_para_cruce(str(row[col_descripcion]))
                     
                     matches = process.extract(
