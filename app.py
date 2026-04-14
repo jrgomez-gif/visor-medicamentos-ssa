@@ -26,7 +26,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. FUNCIONES DE LIMPIEZA Y CARGA
+# 2. FUNCIONES DE LIMPIEZA Y CARGA (AHORA LEE CSV DIRECTO)
 # ==========================================
 def limpiar_texto_para_cruce(texto):
     if pd.isna(texto): return ""
@@ -37,24 +37,41 @@ def limpiar_texto_para_cruce(texto):
     return " ".join(t.split())
 
 @st.cache_data
-def cargar_datos_parquet():
+def cargar_datos_csv():
     try:
-        archivos_parquet = glob.glob("*.parquet")
-        if not archivos_parquet:
-            return None, "No se encontró ningún archivo .parquet en el repositorio."
+        # 1. Escanea automáticamente la carpeta buscando el archivo CSV
+        archivos_csv = glob.glob("*.csv")
+        if not archivos_csv:
+            return None, "No se encontró ningún archivo .csv en el repositorio. Por favor, sube tu base de datos."
             
-        ruta = archivos_parquet[0]
-        # Leemos directo con Pandas (ultra rápido para 15k registros)
-        df = pd.read_parquet(ruta)
+        ruta = archivos_csv[0]
         
+        # 2. Leer el CSV. Usamos engine='python' y str para proteger los saltos de línea internos
+        try:
+            df = pd.read_csv(ruta, encoding='utf-8', dtype=str)
+        except Exception:
+            df = pd.read_csv(ruta, encoding='latin1', dtype=str)
+            
+        # 3. Homologación de columnas
         if 'VistaAdministracion' in df.columns:
             df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
             
+        # 4. Construcción en memoria de las variables de búsqueda (solo ocurre 1 vez)
+        col_gen = 'DenominacionGenerica' if 'DenominacionGenerica' in df.columns else df.columns[0]
+        df['Texto_Limpio_Generica'] = df[col_gen].apply(limpiar_texto_para_cruce)
+        
+        cols_search = [c for c in ['DenominacionGenerica', 'FormaFarmaceutica', 'Presentacion', 'FarmacoConcentracion'] if c in df.columns]
+        if cols_search:
+            df['Busqueda_COFEPRIS'] = df[cols_search].astype(str).agg(' '.join, axis=1).apply(limpiar_texto_para_cruce)
+        else:
+            df['Busqueda_COFEPRIS'] = df['Texto_Limpio_Generica']
+
         return df, None
     except Exception as e:
         return None, str(e)
 
-df_cofepris, error_carga = cargar_datos_parquet()
+# Cargamos los datos
+df_cofepris, error_carga = cargar_datos_csv()
 
 # ==========================================
 # 3. GESTIÓN DE ESTADO (SESSION STATE)
@@ -99,7 +116,7 @@ with st.sidebar:
         st.session_state.resultado_ssa = None
         st.rerun()
         
-    st.markdown("<br><div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Trámites Electrónicos COFEPRIS<br>Visor Inteligente v2.2</div>", unsafe_allow_html=True)
+    st.markdown("<br><div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Trámites Electrónicos COFEPRIS<br>Visor Inteligente v2.1</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 5. CUERPO PRINCIPAL
@@ -121,7 +138,7 @@ with tab1:
     
     col_search1, col_search2 = st.columns(2)
     busqueda_libre = col_search1.text_input("🔍 Búsqueda global (Nombre, Sustancia, etc.):", key="busqueda_libre")
-    busqueda_mult = col_search2.text_area("📋 Búsqueda Múltiple de Registros (separe con comas):", placeholder="001M2026, 002M2026", height=68, key="busqueda_mult")
+    busqueda_mult = col_search2.text_area("📋 Búsqueda Múltiple de Registros (separe con comas):", placeholder="Ej: 363M2018 SSA, 004M2020 SSA", height=68, key="busqueda_mult")
     
     def get_opciones(columna):
         if columna in df_cofepris.columns:
@@ -137,29 +154,28 @@ with tab1:
     col_btn1, _ = st.columns([1, 4])
     col_btn1.button("♻️ Limpiar Filtros", on_click=reset_filters, use_container_width=True)
 
-    # Lógica de filtrado nativa de Pandas (¡Vuelve a ser instantánea!)
+    # Lógica de filtrado nativa de Pandas
     df_mostrar = df_cofepris.copy()
     
     if busqueda_libre:
         mask = df_mostrar.astype(str).apply(lambda x: x.str.contains(busqueda_libre, case=False, na=False)).any(axis=1)
         df_mostrar = df_mostrar[mask]
 
-    if filtro_estado:
+    if len(filtro_estado) > 0:
         df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
         
-    if filtro_forma:
+    if len(filtro_forma) > 0:
         df_mostrar = df_mostrar[df_mostrar['FormaFarmaceutica'].isin(filtro_forma)]
         
-    if filtro_via:
+    if len(filtro_via) > 0:
         df_mostrar = df_mostrar[df_mostrar['ViaAdministracion'].isin(filtro_via)]
         
-    if filtro_titular:
+    if len(filtro_titular) > 0:
         df_mostrar = df_mostrar[df_mostrar['Titular'].isin(filtro_titular)]
         
     if busqueda_mult.strip():
         regs = [r.strip() for r in busqueda_mult.replace(',', '\n').split('\n') if r.strip()]
         if regs and 'NumeroRegistro' in df_mostrar.columns:
-            # Usamos regex para atrapar variaciones si es necesario, o exact match
             patron_regex = '|'.join([re.escape(r) for r in regs])
             df_mostrar = df_mostrar[df_mostrar['NumeroRegistro'].astype(str).str.contains(patron_regex, case=False, na=False)]
 
