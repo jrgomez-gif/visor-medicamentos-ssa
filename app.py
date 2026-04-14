@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import duckdb
 from rapidfuzz import process, fuzz
 import re
 import io
@@ -42,10 +41,11 @@ def cargar_datos_parquet():
     try:
         archivos_parquet = glob.glob("*.parquet")
         if not archivos_parquet:
-            return None, "No se encontró ningún archivo .parquet en el repositorio de GitHub."
+            return None, "No se encontró ningún archivo .parquet en el repositorio."
             
         ruta = archivos_parquet[0]
-        df = duckdb.query(f"SELECT * FROM '{ruta}'").df()
+        # Leemos directo con Pandas (ultra rápido para 15k registros)
+        df = pd.read_parquet(ruta)
         
         if 'VistaAdministracion' in df.columns:
             df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
@@ -59,17 +59,8 @@ df_cofepris, error_carga = cargar_datos_parquet()
 # ==========================================
 # 3. GESTIÓN DE ESTADO (SESSION STATE)
 # ==========================================
-# Para el análisis SSA
 if 'resultado_ssa' not in st.session_state: st.session_state.resultado_ssa = None
 if 'metricas_ssa' not in st.session_state: st.session_state.metricas_ssa = {}
-
-# Para resetear filtros
-if 'busqueda_libre' not in st.session_state: st.session_state.busqueda_libre = ""
-if 'busqueda_mult' not in st.session_state: st.session_state.busqueda_mult = ""
-if 'filtro_estado' not in st.session_state: st.session_state.filtro_estado = []
-if 'filtro_forma' not in st.session_state: st.session_state.filtro_forma = []
-if 'filtro_via' not in st.session_state: st.session_state.filtro_via = []
-if 'filtro_titular' not in st.session_state: st.session_state.filtro_titular = []
 
 def reset_filters():
     st.session_state.busqueda_libre = ""
@@ -108,7 +99,7 @@ with st.sidebar:
         st.session_state.resultado_ssa = None
         st.rerun()
         
-    st.markdown("<br><div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Trámites Electrónicos COFEPRIS<br>Visor Inteligente v2.1</div>", unsafe_allow_html=True)
+    st.markdown("<br><div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Trámites Electrónicos COFEPRIS<br>Visor Inteligente v2.2</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 5. CUERPO PRINCIPAL
@@ -128,15 +119,13 @@ with tab1:
     st.markdown("### 🎛️ Panel de Búsqueda y Filtros")
     st.info("💡 **Tip de Búsqueda:** Ingresa varios registros separados por comas y presiona **Ctrl + Enter** para ejecutar.")
     
-    # 1. Buscadores de Texto
     col_search1, col_search2 = st.columns(2)
     busqueda_libre = col_search1.text_input("🔍 Búsqueda global (Nombre, Sustancia, etc.):", key="busqueda_libre")
     busqueda_mult = col_search2.text_area("📋 Búsqueda Múltiple de Registros (separe con comas):", placeholder="001M2026, 002M2026", height=68, key="busqueda_mult")
     
-    # 2. Filtros Desplegables (Extracción de opciones dinámicas)
     def get_opciones(columna):
         if columna in df_cofepris.columns:
-            return duckdb.query(f"SELECT DISTINCT {columna} FROM df_cofepris WHERE {columna} IS NOT NULL ORDER BY 1").df()[columna].tolist()
+            return sorted(df_cofepris[columna].dropna().unique().tolist())
         return []
 
     c1, c2, c3, c4 = st.columns(4)
@@ -145,42 +134,34 @@ with tab1:
     filtro_via = c3.multiselect("Vía de Administración:", get_opciones('ViaAdministracion'), key="filtro_via")
     filtro_titular = c4.multiselect("Titular del Registro:", get_opciones('Titular'), key="filtro_titular")
 
-    # Botón Limpiar
     col_btn1, _ = st.columns([1, 4])
     col_btn1.button("♻️ Limpiar Filtros", on_click=reset_filters, use_container_width=True)
 
-    # 3. Lógica de filtrado con DuckDB
-    query_sql = "SELECT * FROM df_cofepris WHERE 1=1"
+    # Lógica de filtrado nativa de Pandas (¡Vuelve a ser instantánea!)
+    df_mostrar = df_cofepris.copy()
     
     if busqueda_libre:
-        cols_b = []
-        if 'DenominacionGenerica' in df_cofepris.columns: cols_b.append(f"DenominacionGenerica ILIKE '%{busqueda_libre}%'")
-        if 'DenominacionDistintiva' in df_cofepris.columns: cols_b.append(f"DenominacionDistintiva ILIKE '%{busqueda_libre}%'")
-        if cols_b: query_sql += f" AND ({' OR '.join(cols_b)})"
+        mask = df_mostrar.astype(str).apply(lambda x: x.str.contains(busqueda_libre, case=False, na=False)).any(axis=1)
+        df_mostrar = df_mostrar[mask]
 
     if filtro_estado:
-        lst_e = [f"'{x.replace(chr(39), chr(39)+chr(39))}'" for x in filtro_estado]
-        query_sql += f" AND Estado IN ({', '.join(lst_e)})"
+        df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
         
     if filtro_forma:
-        lst_f = [f"'{x.replace(chr(39), chr(39)+chr(39))}'" for x in filtro_forma]
-        query_sql += f" AND FormaFarmaceutica IN ({', '.join(lst_f)})"
+        df_mostrar = df_mostrar[df_mostrar['FormaFarmaceutica'].isin(filtro_forma)]
         
     if filtro_via:
-        lst_v = [f"'{x.replace(chr(39), chr(39)+chr(39))}'" for x in filtro_via]
-        query_sql += f" AND ViaAdministracion IN ({', '.join(lst_v)})"
+        df_mostrar = df_mostrar[df_mostrar['ViaAdministracion'].isin(filtro_via)]
         
     if filtro_titular:
-        lst_t = [f"'{x.replace(chr(39), chr(39)+chr(39))}'" for x in filtro_titular]
-        query_sql += f" AND Titular IN ({', '.join(lst_t)})"
+        df_mostrar = df_mostrar[df_mostrar['Titular'].isin(filtro_titular)]
         
     if busqueda_mult.strip():
-        regs = [f"'{r.strip()}'" for r in busqueda_mult.replace(',', '\n').split('\n') if r.strip()]
-        if regs and 'NumeroRegistro' in df_cofepris.columns: 
-            query_sql += f" AND NumeroRegistro IN ({','.join(regs)})"
-
-    # Ejecuta el filtro
-    df_mostrar = duckdb.query(query_sql).df()
+        regs = [r.strip() for r in busqueda_mult.replace(',', '\n').split('\n') if r.strip()]
+        if regs and 'NumeroRegistro' in df_mostrar.columns:
+            # Usamos regex para atrapar variaciones si es necesario, o exact match
+            patron_regex = '|'.join([re.escape(r) for r in regs])
+            df_mostrar = df_mostrar[df_mostrar['NumeroRegistro'].astype(str).str.contains(patron_regex, case=False, na=False)]
 
     # Ocultar columnas internas
     cols_ocultar = ['Texto_Limpio_Generica', 'Busqueda_COFEPRIS', 'UUID', 'ClaveCompendio']
