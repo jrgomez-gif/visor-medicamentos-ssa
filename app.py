@@ -46,7 +46,7 @@ def cargar_datos_csv():
             
         ruta = archivos_csv[0]
         
-        # 2. Leer el CSV. Usamos engine='python' y str para proteger los saltos de línea internos
+        # 2. Leer el CSV. Usamos dtype=str para forzar que todo se lea como texto
         try:
             df = pd.read_csv(ruta, encoding='utf-8', dtype=str)
         except Exception:
@@ -56,13 +56,15 @@ def cargar_datos_csv():
         if 'VistaAdministracion' in df.columns:
             df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
             
-        # 4. Construcción en memoria de las variables de búsqueda (solo ocurre 1 vez)
+        # 4. Construcción en memoria de las variables de búsqueda
         col_gen = 'DenominacionGenerica' if 'DenominacionGenerica' in df.columns else df.columns[0]
         df['Texto_Limpio_Generica'] = df[col_gen].apply(limpiar_texto_para_cruce)
         
         cols_search = [c for c in ['DenominacionGenerica', 'FormaFarmaceutica', 'Presentacion', 'FarmacoConcentracion'] if c in df.columns]
+        
         if cols_search:
-            df['Busqueda_COFEPRIS'] = df[cols_search].astype(str).agg(' '.join, axis=1).apply(limpiar_texto_para_cruce)
+            # 🟢 Llenamos los vacíos (NaN) con texto en blanco antes de unir las columnas
+            df['Busqueda_COFEPRIS'] = df[cols_search].fillna('').astype(str).apply(lambda row: ' '.join(row), axis=1).apply(limpiar_texto_para_cruce)
         else:
             df['Busqueda_COFEPRIS'] = df['Texto_Limpio_Generica']
 
@@ -222,7 +224,7 @@ with tab1:
             d_conc = detalle.get('FarmacoConcentracion', 'N/A')
             d_pres = detalle.get('Presentacion', 'N/A')
             
-            if pd.isna(d_distintiva): d_distintiva = 'GENÉRICO'
+            if pd.isna(d_distintiva) or str(d_distintiva).strip() == '': d_distintiva = 'GENÉRICO'
             
             st.markdown(f"""<div class="detalle-card">
                 <div style="display: flex; justify-content: space-between;">
