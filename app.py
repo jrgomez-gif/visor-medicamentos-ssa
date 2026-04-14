@@ -4,6 +4,7 @@ import duckdb
 from rapidfuzz import process, fuzz
 import re
 import io
+import glob
 
 # ==========================================
 # 1. CONFIGURACIÓN DE PÁGINA Y TEMA
@@ -38,11 +39,18 @@ def limpiar_texto_para_cruce(texto):
 
 @st.cache_data
 def cargar_datos_parquet():
-    # Asegúrate de poner el nombre exacto de tu archivo parquet exportado
-    ruta = "_SELECT_P_ProductId_AS_UUID_REGISTRO_SANITARIO_P_PRODUCTNUMBER_A_202604140948.parquet"
-    
     try:
-        # DuckDB lee el archivo y lo pasamos a un DataFrame estándar
+        # Escanear la carpeta actual en busca de archivos .parquet
+        archivos_parquet = glob.glob("*.parquet")
+        
+        # Validar si se encontró al menos un archivo
+        if not archivos_parquet:
+            return None, "No se encontró ningún archivo .parquet en el repositorio de GitHub."
+            
+        # Tomar el primer archivo parquet que encuentre en la lista
+        ruta = archivos_parquet[0]
+        
+        # DuckDB lee el archivo dinámicamente y lo pasamos a un DataFrame estándar
         df = duckdb.query(f"SELECT * FROM '{ruta}'").df()
         
         # Ajuste de nombre por si viene del formato anterior
@@ -53,7 +61,6 @@ def cargar_datos_parquet():
     except Exception as e:
         return None, str(e)
 
-# 🟢 Corrección: Ya no guardamos la "conexión", solo el DataFrame
 df_cofepris, error_carga = cargar_datos_parquet()
 
 # ==========================================
@@ -101,7 +108,6 @@ with tab1:
     busqueda_libre = c1.text_input("🔍 Búsqueda rápida (Nombre o Sustancia):")
     busqueda_mult = c2.text_area("📋 Registros múltiples (Comas):", placeholder="001M2026, 002M2026", height=68)
     
-    # 🟢 Corrección: DuckDB consulta directamente la variable df_cofepris
     if 'FormaFarmaceutica' in df_cofepris.columns:
         formas = duckdb.query("SELECT DISTINCT FormaFarmaceutica FROM df_cofepris WHERE FormaFarmaceutica IS NOT NULL ORDER BY 1").df()
         filtro_forma = c3.selectbox("Forma Farmacéutica:", ["Todas"] + formas['FormaFarmaceutica'].tolist())
@@ -112,7 +118,6 @@ with tab1:
     query_sql = "SELECT * FROM df_cofepris WHERE 1=1"
     
     if busqueda_libre:
-        # Busca en columnas si existen
         cols_b = []
         if 'DenominacionGenerica' in df_cofepris.columns: cols_b.append(f"DenominacionGenerica ILIKE '%{busqueda_libre}%'")
         if 'DenominacionDistintiva' in df_cofepris.columns: cols_b.append(f"DenominacionDistintiva ILIKE '%{busqueda_libre}%'")
@@ -149,7 +154,6 @@ with tab1:
         if seleccion != "-- Seleccione --":
             detalle = df_mostrar[df_mostrar['NumeroRegistro'].astype(str) == seleccion].iloc[0]
             
-            # Obtención segura de datos por si cambian los nombres de las columnas
             d_distintiva = detalle.get('DenominacionDistintiva', 'GENÉRICO')
             d_estado = detalle.get('Estado', 'VIGENTE')
             d_reg = detalle.get('NumeroRegistro', 'N/A')
@@ -189,22 +193,19 @@ with tab1:
 # ------------------------------------------
 with tab2:
     if archivo_ssa:
-        # Si el usuario hace clic, procesamos y guardamos en Session State
         if st.button("🚀 Iniciar Análisis de Similitud"):
             df_ssa = pd.read_csv(archivo_ssa, encoding='latin1') if archivo_ssa.name.endswith('.csv') else pd.read_excel(archivo_ssa)
             
             with st.spinner("Analizando redes difusas..."):
                 res_reg, res_fue, res_score = [], [], []
                 
-                # Validamos que tengamos la columna base de cruce en COFEPRIS
                 col_busqueda = 'Busqueda_COFEPRIS' if 'Busqueda_COFEPRIS' in df_cofepris.columns else df_cofepris.columns[0]
                 col_sustancia = 'Texto_Limpio_Generica' if 'Texto_Limpio_Generica' in df_cofepris.columns else df_cofepris.columns[0]
                 col_registro = 'NumeroRegistro' if 'NumeroRegistro' in df_cofepris.columns else df_cofepris.columns[0]
 
                 for _, row in df_ssa.iterrows():
-                    q = limpiar_texto_para_cruce(str(row.iloc[0])) # Usando primera columna
+                    q = limpiar_texto_para_cruce(str(row.iloc[0]))
                     
-                    # Filtro rápido por sustancia (85%)
                     candidatos = df_cofepris[df_cofepris[col_sustancia].apply(lambda x: fuzz.token_set_ratio(q, x) >= 85)]
                     
                     if not candidatos.empty:
@@ -222,14 +223,12 @@ with tab2:
                 df_ssa['Match_Registro'] = res_reg
                 df_ssa['Similitud_%'] = res_score
                 
-                # PERSISTENCIA: Guardamos en Session State
                 st.session_state.resultado_ssa = df_ssa
                 st.session_state.metricas_ssa = {
                     "Total": len(df_ssa),
                     "Encontrados": len(df_ssa[df_ssa['Similitud_%'] > 0])
                 }
 
-    # MOSTRAR RESULTADOS SI EXISTEN (Incluso si cambias de pestaña)
     if st.session_state.resultado_ssa is not None:
         st.markdown("### 📊 Resultado del Último Análisis")
         m = st.session_state.metricas_ssa
