@@ -4,3 +4,6 @@ rapidfuzz
 pyarrow
 openpyxl
 duckdb
+re
+io
+glob
