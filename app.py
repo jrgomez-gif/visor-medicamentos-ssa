@@ -26,7 +26,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. FUNCIONES DE LIMPIEZA Y MOTOR DUCKDB
+# 2. FUNCIONES DE LIMPIEZA Y CARGA
 # ==========================================
 def limpiar_texto_para_cruce(texto):
     if pd.isna(texto): return ""
@@ -37,33 +37,24 @@ def limpiar_texto_para_cruce(texto):
     return " ".join(t.split())
 
 @st.cache_data
-def cargar_datos_duckdb():
-    ruta = "base_registros_sanitarios.parquet"
+def cargar_datos_parquet():
+    # Asegúrate de poner el nombre exacto de tu archivo parquet exportado
+    ruta = "_SELECT_P_ProductId_AS_UUID_REGISTRO_SANITARIO_P_PRODUCTNUMBER_A_202604140948.parquet"
+    
     try:
-        # Usamos DuckDB para pre-procesar y cargar en memoria
-        con = duckdb.connect(database=':memory:')
-        con.execute(f"CREATE TABLE medicamentos AS SELECT * FROM read_parquet('{ruta}')")
+        # DuckDB lee el archivo y lo pasamos a un DataFrame estándar
+        df = duckdb.query(f"SELECT * FROM '{ruta}'").df()
         
-        # Ajustes de nombres de columnas si existen
-        cols = con.execute("PRAGMA table_info('medicamentos')").fetchall()
-        col_names = [c[1] for c in cols]
-        
-        if 'VistaAdministracion' in col_names:
-            con.execute("ALTER TABLE medicamentos RENAME VistaAdministracion TO ViaAdministracion")
-        
-        df = con.execute("SELECT * FROM medicamentos").df()
-        
-        # Pre-procesamiento de textos para redes difusas
-        df['Texto_Limpio_Generica'] = df['DenominacionGenerica'].apply(limpiar_texto_para_cruce)
-        df['Busqueda_COFEPRIS'] = (df['Texto_Limpio_Generica'] + " " + 
-                                  df['FormaFarmaceutica'].fillna('') + " " + 
-                                  df['Presentacion'].fillna('')).str.lower()
-        
-        return df, con
+        # Ajuste de nombre por si viene del formato anterior
+        if 'VistaAdministracion' in df.columns:
+            df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
+            
+        return df, None
     except Exception as e:
         return None, str(e)
 
-df_cofepris, con_duck = cargar_datos_duckdb()
+# 🟢 Corrección: Ya no guardamos la "conexión", solo el DataFrame
+df_cofepris, error_carga = cargar_datos_parquet()
 
 # ==========================================
 # 3. GESTIÓN DE ESTADO (SESSION STATE)
@@ -93,6 +84,10 @@ with st.sidebar:
 # ==========================================
 st.markdown("<h1>Visor Inteligente de Medicamentos</h1>", unsafe_allow_html=True)
 
+if df_cofepris is None:
+    st.error(f"🚨 Error al leer la base de datos: **{error_carga}**")
+    st.stop()
+
 tab1, tab2 = st.tabs(["🔍 Buscador y Detalles", "⚙️ Cruce SSA (Persistente)"])
 
 # ------------------------------------------
@@ -100,58 +95,91 @@ tab1, tab2 = st.tabs(["🔍 Buscador y Detalles", "⚙️ Cruce SSA (Persistente
 # ------------------------------------------
 with tab1:
     st.markdown("### 🎛️ Filtros de Búsqueda")
+    st.info("💡 **Tip:** En la búsqueda múltiple, puedes ingresar varios registros separándolos por comas y presionar **Ctrl + Enter** para ejecutar la consulta.")
     
     c1, c2, c3 = st.columns([2, 2, 1])
     busqueda_libre = c1.text_input("🔍 Búsqueda rápida (Nombre o Sustancia):")
     busqueda_mult = c2.text_area("📋 Registros múltiples (Comas):", placeholder="001M2026, 002M2026", height=68)
     
-    # DuckDB para filtros rápidos
-    formas = con_duck.execute("SELECT DISTINCT FormaFarmaceutica FROM medicamentos ORDER BY 1").df()
-    filtro_forma = c3.selectbox("Forma Farmacéutica:", ["Todas"] + formas['FormaFarmaceutica'].tolist())
+    # 🟢 Corrección: DuckDB consulta directamente la variable df_cofepris
+    if 'FormaFarmaceutica' in df_cofepris.columns:
+        formas = duckdb.query("SELECT DISTINCT FormaFarmaceutica FROM df_cofepris WHERE FormaFarmaceutica IS NOT NULL ORDER BY 1").df()
+        filtro_forma = c3.selectbox("Forma Farmacéutica:", ["Todas"] + formas['FormaFarmaceutica'].tolist())
+    else:
+        filtro_forma = "Todas"
 
-    # Lógica de filtrado con DuckDB
-    query_sql = "SELECT * FROM medicamentos WHERE 1=1"
+    # Lógica de filtrado con DuckDB sobre el DataFrame
+    query_sql = "SELECT * FROM df_cofepris WHERE 1=1"
+    
     if busqueda_libre:
-        query_sql += f" AND (DenominacionGenerica ILIKE '%{busqueda_libre}%' OR DenominacionDistintiva ILIKE '%{busqueda_libre}%')"
+        # Busca en columnas si existen
+        cols_b = []
+        if 'DenominacionGenerica' in df_cofepris.columns: cols_b.append(f"DenominacionGenerica ILIKE '%{busqueda_libre}%'")
+        if 'DenominacionDistintiva' in df_cofepris.columns: cols_b.append(f"DenominacionDistintiva ILIKE '%{busqueda_libre}%'")
+        
+        if cols_b:
+            query_sql += f" AND ({' OR '.join(cols_b)})"
+
     if filtro_forma != "Todas":
         query_sql += f" AND FormaFarmaceutica = '{filtro_forma}'"
+        
     if busqueda_mult:
         regs = [f"'{r.strip()}'" for r in busqueda_mult.split(',') if r.strip()]
-        if regs: query_sql += f" AND NumeroRegistro IN ({','.join(regs)})"
+        if regs and 'NumeroRegistro' in df_cofepris.columns: 
+            query_sql += f" AND NumeroRegistro IN ({','.join(regs)})"
 
-    df_mostrar = con_duck.execute(query_sql).df()
+    # Ejecuta el filtro
+    df_mostrar = duckdb.query(query_sql).df()
 
-    st.dataframe(df_mostrar, use_container_width=True, height=300)
+    # Ocultar columnas internas antes de mostrar en tabla
+    cols_ocultar = ['Texto_Limpio_Generica', 'Busqueda_COFEPRIS']
+    df_vista = df_mostrar.drop(columns=[c for c in cols_ocultar if c in df_mostrar.columns])
+    
+    st.dataframe(df_vista, use_container_width=True, height=300)
 
-    # --- SECCIÓN NUEVA: DETALLE DE REGISTRO ---
+    # --- DETALLE DE REGISTRO ---
     st.markdown("---")
     st.markdown("### 📄 Detalle Extendido de Registro")
     
-    if not df_mostrar.empty:
-        opciones_registro = df_mostrar['NumeroRegistro'].tolist()
+    if not df_mostrar.empty and 'NumeroRegistro' in df_mostrar.columns:
+        opciones_registro = df_mostrar['NumeroRegistro'].dropna().astype(str).tolist()
         seleccion = st.selectbox("Seleccione un Registro Sanitario para ver su ficha técnica:", 
                                options=["-- Seleccione --"] + opciones_registro)
         
         if seleccion != "-- Seleccione --":
-            detalle = df_mostrar[df_mostrar['NumeroRegistro'] == seleccion].iloc[0]
+            detalle = df_mostrar[df_mostrar['NumeroRegistro'].astype(str) == seleccion].iloc[0]
+            
+            # Obtención segura de datos por si cambian los nombres de las columnas
+            d_distintiva = detalle.get('DenominacionDistintiva', 'GENÉRICO')
+            d_estado = detalle.get('Estado', 'VIGENTE')
+            d_reg = detalle.get('NumeroRegistro', 'N/A')
+            d_fecha = detalle.get('FechaEmision', 'N/A')
+            d_titular = detalle.get('Titular', 'N/A')
+            d_generica = detalle.get('DenominacionGenerica', 'N/A')
+            d_forma = detalle.get('FormaFarmaceutica', 'N/A')
+            d_via = detalle.get('ViaAdministracion', 'N/A')
+            d_conc = detalle.get('FarmacoConcentracion', 'N/A')
+            d_pres = detalle.get('Presentacion', 'N/A')
+            
+            if pd.isna(d_distintiva): d_distintiva = 'GENÉRICO'
             
             st.markdown(f"""<div class="detalle-card">
                 <div style="display: flex; justify-content: space-between;">
-                    <h2 style="color: #6F1827; margin:0;">{detalle['DenominacionDistintiva'] if pd.notna(detalle['DenominacionDistintiva']) else 'GENÉRICO'}</h2>
-                    <span style="background: #B38E5D; color: white; padding: 5px 15px; border-radius: 20px;">{detalle['Estado']}</span>
+                    <h2 style="color: #6F1827; margin:0;">{d_distintiva}</h2>
+                    <span style="background: #B38E5D; color: white; padding: 5px 15px; border-radius: 20px;">{d_estado}</span>
                 </div>
                 <hr>
                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
-                    <div><b>Registro:</b><br>{detalle['NumeroRegistro']}</div>
-                    <div><b>Vigencia:</b><br>{detalle['FechaEmision'] if 'FechaEmision' in detalle else 'N/A'}</div>
-                    <div><b>Titular:</b><br>{detalle['Titular']}</div>
-                    <div style="grid-column: span 3;"><b>Sustancia(s):</b><br>{detalle['DenominacionGenerica']}</div>
-                    <div><b>Forma Farmacéutica:</b><br>{detalle['FormaFarmaceutica']}</div>
-                    <div><b>Vía Admón:</b><br>{detalle['ViaAdministracion']}</div>
-                    <div><b>Concentración:</b><br>{detalle['FarmacoConcentracion']}</div>
+                    <div><b>Registro:</b><br>{d_reg}</div>
+                    <div><b>Vigencia:</b><br>{d_fecha}</div>
+                    <div><b>Titular:</b><br>{d_titular}</div>
+                    <div style="grid-column: span 3;"><b>Sustancia(s):</b><br>{d_generica}</div>
+                    <div><b>Forma Farmacéutica:</b><br>{d_forma}</div>
+                    <div><b>Vía Admón:</b><br>{d_via}</div>
+                    <div><b>Concentración:</b><br>{d_conc}</div>
                 </div>
                 <br>
-                <b>Presentación Autorizada:</b><br>{detalle['Presentacion']}
+                <b>Presentación Autorizada:</b><br>{d_pres}
             </div>""", unsafe_allow_html=True)
     else:
         st.info("No hay registros que coincidan con los filtros para mostrar detalles.")
@@ -165,21 +193,24 @@ with tab2:
         if st.button("🚀 Iniciar Análisis de Similitud"):
             df_ssa = pd.read_csv(archivo_ssa, encoding='latin1') if archivo_ssa.name.endswith('.csv') else pd.read_excel(archivo_ssa)
             
-            # (Aquí va tu lógica de RapidFuzz simplificada para el ejemplo)
             with st.spinner("Analizando redes difusas..."):
                 res_reg, res_fue, res_score = [], [], []
                 
-                # Usamos los datos cargados en df_cofepris para el cruce
+                # Validamos que tengamos la columna base de cruce en COFEPRIS
+                col_busqueda = 'Busqueda_COFEPRIS' if 'Busqueda_COFEPRIS' in df_cofepris.columns else df_cofepris.columns[0]
+                col_sustancia = 'Texto_Limpio_Generica' if 'Texto_Limpio_Generica' in df_cofepris.columns else df_cofepris.columns[0]
+                col_registro = 'NumeroRegistro' if 'NumeroRegistro' in df_cofepris.columns else df_cofepris.columns[0]
+
                 for _, row in df_ssa.iterrows():
-                    q = limpiar_texto_para_cruce(str(row.iloc[0])) # Usando primera col como ejemplo
+                    q = limpiar_texto_para_cruce(str(row.iloc[0])) # Usando primera columna
                     
                     # Filtro rápido por sustancia (85%)
-                    candidatos = df_cofepris[df_cofepris['Texto_Limpio_Generica'].apply(lambda x: fuzz.token_set_ratio(q, x) >= 85)]
+                    candidatos = df_cofepris[df_cofepris[col_sustancia].apply(lambda x: fuzz.token_set_ratio(q, x) >= 85)]
                     
                     if not candidatos.empty:
-                        match = process.extractOne(q, candidatos['Busqueda_COFEPRIS'], scorer=fuzz.token_set_ratio)
+                        match = process.extractOne(q, candidatos[col_busqueda], scorer=fuzz.token_set_ratio)
                         if match and match[1] >= umbral:
-                            res_reg.append(candidatos.loc[match[2], 'NumeroRegistro'])
+                            res_reg.append(candidatos.loc[match[2], col_registro])
                             res_fue.append("Fuente Localizada")
                             res_score.append(match[1])
                             continue
@@ -208,7 +239,6 @@ with tab2:
         
         st.dataframe(st.session_state.resultado_ssa, use_container_width=True)
         
-        # Botón de descarga
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             st.session_state.resultado_ssa.to_excel(writer, index=False)
