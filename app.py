@@ -26,7 +26,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. FUNCIONES DE LIMPIEZA Y CARGA (AHORA LEE CSV DIRECTO)
+# 2. FUNCIONES DE LIMPIEZA Y CARGA
 # ==========================================
 def limpiar_texto_para_cruce(texto):
     if pd.isna(texto): return ""
@@ -39,31 +39,27 @@ def limpiar_texto_para_cruce(texto):
 @st.cache_data
 def cargar_datos_csv():
     try:
-        # 1. Escanea automáticamente la carpeta buscando el archivo CSV
         archivos_csv = glob.glob("*.csv")
         if not archivos_csv:
             return None, "No se encontró ningún archivo .csv en el repositorio. Por favor, sube tu base de datos."
             
         ruta = archivos_csv[0]
         
-        # 2. Leer el CSV. Usamos dtype=str para forzar que todo se lea como texto
         try:
             df = pd.read_csv(ruta, encoding='utf-8', dtype=str)
         except Exception:
             df = pd.read_csv(ruta, encoding='latin1', dtype=str)
             
-        # 3. Homologación de columnas
         if 'VistaAdministracion' in df.columns:
             df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
             
-        # 4. Construcción en memoria de las variables de búsqueda
+        # 🟢 Variables de búsqueda con limpieza de acentos y caracteres
         col_gen = 'DenominacionGenerica' if 'DenominacionGenerica' in df.columns else df.columns[0]
         df['Texto_Limpio_Generica'] = df[col_gen].apply(limpiar_texto_para_cruce)
         
         cols_search = [c for c in ['DenominacionGenerica', 'FormaFarmaceutica', 'Presentacion', 'FarmacoConcentracion'] if c in df.columns]
         
         if cols_search:
-            # 🟢 Llenamos los vacíos (NaN) con texto en blanco antes de unir las columnas
             df['Busqueda_COFEPRIS'] = df[cols_search].fillna('').astype(str).apply(lambda row: ' '.join(row), axis=1).apply(limpiar_texto_para_cruce)
         else:
             df['Busqueda_COFEPRIS'] = df['Texto_Limpio_Generica']
@@ -72,7 +68,6 @@ def cargar_datos_csv():
     except Exception as e:
         return None, str(e)
 
-# Cargamos los datos
 df_cofepris, error_carga = cargar_datos_csv()
 
 # ==========================================
@@ -118,7 +113,7 @@ with st.sidebar:
         st.session_state.resultado_ssa = None
         st.rerun()
         
-    st.markdown("<br><div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Trámites Electrónicos COFEPRIS<br>Visor Inteligente v2.1</div>", unsafe_allow_html=True)
+    st.markdown("<br><div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Trámites Electrónicos COFEPRIS<br>Visor Inteligente v2.3</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 5. CUERPO PRINCIPAL
@@ -156,7 +151,6 @@ with tab1:
     col_btn1, _ = st.columns([1, 4])
     col_btn1.button("♻️ Limpiar Filtros", on_click=reset_filters, use_container_width=True)
 
-    # Lógica de filtrado nativa de Pandas
     df_mostrar = df_cofepris.copy()
     
     if busqueda_libre:
@@ -181,7 +175,6 @@ with tab1:
             patron_regex = '|'.join([re.escape(r) for r in regs])
             df_mostrar = df_mostrar[df_mostrar['NumeroRegistro'].astype(str).str.contains(patron_regex, case=False, na=False)]
 
-    # Ocultar columnas internas
     cols_ocultar = ['Texto_Limpio_Generica', 'Busqueda_COFEPRIS', 'UUID', 'ClaveCompendio']
     df_vista = df_mostrar.drop(columns=[c for c in cols_ocultar if c in df_mostrar.columns])
     
@@ -201,7 +194,6 @@ with tab1:
         
     st.dataframe(df_vista, use_container_width=True, height=300)
 
-    # --- DETALLE DE REGISTRO ---
     st.markdown("---")
     st.markdown("### 📄 Detalle Extendido de Registro")
     
@@ -252,22 +244,30 @@ with tab1:
 # ------------------------------------------
 with tab2:
     if archivo_ssa:
+        df_ssa_temp = pd.read_csv(archivo_ssa, encoding='latin1', dtype=str) if archivo_ssa.name.endswith('.csv') else pd.read_excel(archivo_ssa, dtype=str)
+        
+        # 🟢 SELECCIÓN DINÁMICA DE LA COLUMNA A ANALIZAR
+        st.markdown("### 🎯 Configuración del Cruce")
+        col_descripcion = st.selectbox("¿Qué columna de tu archivo contiene la descripción del medicamento a cruzar?", df_ssa_temp.columns.tolist())
+        
         if st.button("🚀 Iniciar Análisis de Similitud"):
-            df_ssa = pd.read_csv(archivo_ssa, encoding='latin1') if archivo_ssa.name.endswith('.csv') else pd.read_excel(archivo_ssa)
-            
-            with st.spinner("Analizando redes difusas..."):
+            with st.spinner("Analizando redes difusas en 2 pasos..."):
                 res_reg, res_fue, res_score = [], [], []
                 
                 col_busqueda = 'Busqueda_COFEPRIS' if 'Busqueda_COFEPRIS' in df_cofepris.columns else df_cofepris.columns[0]
                 col_sustancia = 'Texto_Limpio_Generica' if 'Texto_Limpio_Generica' in df_cofepris.columns else df_cofepris.columns[0]
                 col_registro = 'NumeroRegistro' if 'NumeroRegistro' in df_cofepris.columns else df_cofepris.columns[0]
 
-                for _, row in df_ssa.iterrows():
-                    q = limpiar_texto_para_cruce(str(row.iloc[0]))
+                for _, row in df_ssa_temp.iterrows():
+                    # Usamos la columna seleccionada por el usuario
+                    q_original = str(row[col_descripcion])
+                    q = limpiar_texto_para_cruce(q_original)
                     
+                    # PASO 1: Candado del Principio Activo (Compara contra DenominacionGenerica)
                     candidatos = df_cofepris[df_cofepris[col_sustancia].apply(lambda x: fuzz.token_set_ratio(q, x) >= 85)]
                     
                     if not candidatos.empty:
+                        # PASO 2: Similitud global entre los candidatos pre-filtrados
                         match = process.extractOne(q, candidatos[col_busqueda], scorer=fuzz.token_set_ratio)
                         if match and match[1] >= umbral:
                             res_reg.append(candidatos.loc[match[2], col_registro])
@@ -279,13 +279,13 @@ with tab2:
                     res_fue.append("N/A")
                     res_score.append(0)
 
-                df_ssa['Match_Registro'] = res_reg
-                df_ssa['Similitud_%'] = res_score
+                df_ssa_temp['Match_Registro'] = res_reg
+                df_ssa_temp['Similitud_%'] = res_score
                 
-                st.session_state.resultado_ssa = df_ssa
+                st.session_state.resultado_ssa = df_ssa_temp
                 st.session_state.metricas_ssa = {
-                    "Total": len(df_ssa),
-                    "Encontrados": len(df_ssa[df_ssa['Similitud_%'] > 0])
+                    "Total": len(df_ssa_temp),
+                    "Encontrados": len(df_ssa_temp[df_ssa_temp['Similitud_%'] > 0])
                 }
 
     if st.session_state.resultado_ssa is not None:
@@ -302,4 +302,4 @@ with tab2:
             st.session_state.resultado_ssa.to_excel(writer, index=False)
         st.download_button("📥 Descargar Reporte de Cruce", output.getvalue(), "Cruce_SSA.xlsx")
     else:
-        st.info("No hay análisis activo. Sube un archivo y presiona 'Iniciar' en la pestaña de Cruce SSA.")
+        st.info("No hay análisis activo. Sube un archivo, selecciona la columna de descripción y presiona 'Iniciar'.")
