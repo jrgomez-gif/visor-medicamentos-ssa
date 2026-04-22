@@ -38,21 +38,21 @@ def limpiar_texto_para_cruce(texto):
 @st.cache_data
 def cargar_datos_csv():
     try:
-        archivos_csv = glob.glob("*.xlsx")
+        # Modificado para leer formato Parquet
+        archivos_csv = glob.glob("*.parquet")
         if not archivos_csv:
-            return None, "No se encontró ningún archivo .xlsx en el repositorio. Por favor, sube tu base de datos."
+            return None, "No se encontró ningún archivo .parquet en el repositorio. Por favor, sube tu base de datos convertida."
             
         ruta = archivos_csv[0]
         
         try:
-            df = pd.read_excel(ruta, dtype=str)
+            # Leemos parquet y forzamos todo a string para evitar errores de tipo en las búsquedas
+            df = pd.read_parquet(ruta).astype(str)
         except Exception as e:
-            return None, f"Error al leer el Excel: {str(e)}"
+            return None, f"Error al leer el archivo Parquet: {str(e)}"
             
-        # 🟢 VARIABLE AUTORIZADA PARA OPTIMIZACIÓN DE BÚSQUEDA
         df['Texto_Busqueda_Rapida'] = df.fillna('').astype(str).agg(' '.join, axis=1).str.lower()
             
-        # Uso de los nombres exactos proporcionados por el usuario
         col_gen = 'Denominacion Generica' if 'Denominacion Generica' in df.columns else df.columns[0]
         col_forma = 'Forma Farmaceutica' if 'Forma Farmaceutica' in df.columns else df.columns[0]
         
@@ -150,43 +150,37 @@ with tab1:
     filtro_via = c3.multiselect("Vía de Administración:", get_opciones('Vista Administración'), key="filtro_via")
     filtro_titular = c4.multiselect("Titular del Registro:", get_opciones('Titular'), key="filtro_titular")
 
-    st.button("♻️ Limpiar Filtros", on_click=reset_filters, use_container_width=True)
+    # Restaurado el diseño del botón a su tamaño pequeño original
+    col_btn1, _ = st.columns([1, 4])
+    col_btn1.button("♻️ Limpiar Filtros", on_click=reset_filters, use_container_width=True)
 
     df_mostrar = df_cofepris.copy()
-    filtros_activos = False
     
     if busqueda_libre:
         df_mostrar = df_mostrar[df_mostrar['Texto_Busqueda_Rapida'].str.contains(busqueda_libre.lower(), na=False)]
-        filtros_activos = True
 
     if len(filtro_estado) > 0:
         df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
-        filtros_activos = True
         
     if len(filtro_forma) > 0:
         df_mostrar = df_mostrar[df_mostrar['Forma Farmaceutica'].isin(filtro_forma)]
-        filtros_activos = True
         
     if len(filtro_via) > 0:
         df_mostrar = df_mostrar[df_mostrar['Vista Administración'].isin(filtro_via)]
-        filtros_activos = True
         
     if len(filtro_titular) > 0:
         df_mostrar = df_mostrar[df_mostrar['Titular'].isin(filtro_titular)]
-        filtros_activos = True
         
     if busqueda_mult.strip():
         regs = [r.strip() for r in busqueda_mult.replace(',', '\n').split('\n') if r.strip()]
         if regs and 'Número de Registro' in df_mostrar.columns:
             patron_regex = '|'.join([re.escape(r) for r in regs])
             df_mostrar = df_mostrar[df_mostrar['Número de Registro'].astype(str).str.contains(patron_regex, case=False, na=False)]
-            filtros_activos = True
 
-    # Ocultamos las columnas de procesamiento lógico
     cols_ocultar = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Filtro_Paso1', 'Busqueda_COFEPRIS', 'Texto_Busqueda_Rapida']
     df_vista = df_mostrar.drop(columns=[c for c in cols_ocultar if c in df_mostrar.columns])
     
-    st.markdown(f"**Total de resultados filtrados:** {len(df_vista):,}")
+    st.markdown(f"**Total de resultados:** {len(df_vista):,}")
     
     if not df_vista.empty:
         output = io.BytesIO()
@@ -200,12 +194,8 @@ with tab1:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
-        # Optimización de renderizado UI: Si no hay filtros, mostramos solo una muestra visual para no colgar la página
-        if not filtros_activos and len(df_vista) > 100:
-            st.info("Mostrando los primeros 100 registros. Usa los filtros o el buscador para refinar, o descarga el Excel para ver todos.")
-            st.dataframe(df_vista.head(100), use_container_width=True, height=400)
-        else:
-            st.dataframe(df_vista, use_container_width=True, height=400)
+    # Se eliminó la restricción de los 100 registros. Mostrará la tabla completa.
+    st.dataframe(df_vista, use_container_width=True, height=400)
 
 # ------------------------------------------
 # PESTAÑA 2: CRUCE SSA (PERSISTENTE)
