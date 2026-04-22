@@ -45,13 +45,15 @@ def cargar_datos_csv():
             
         ruta = archivos_csv[0]
         
+        ruta = archivos_csv[0]
+        
         try:
-            df = pd.read_csv(ruta, encoding='utf-8', dtype=str)
+            # Forzamos la lectura de filas vacías y aseguramos el manejo estándar del motor de Python
+            df = pd.read_csv(ruta, encoding='utf-8', dtype=str, skip_blank_lines=False, engine='python')
         except Exception:
-            df = pd.read_csv(ruta, encoding='latin1', dtype=str)
+            df = pd.read_csv(ruta, encoding='latin1', dtype=str, skip_blank_lines=False, engine='python')
             
         if 'VistaAdministracion' in df.columns:
-            df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
             
         # Construcción en memoria de las variables de búsqueda
         col_gen = 'DenominacionGenerica' if 'DenominacionGenerica' in df.columns else df.columns[0]
