@@ -39,7 +39,6 @@ def limpiar_texto_para_cruce(texto):
 @st.cache_data
 def cargar_datos_csv():
     try:
-        # Modificación exclusiva aquí: buscar y leer archivo de Excel
         archivos_csv = glob.glob("*.xlsx")
         if not archivos_csv:
             return None, "No se encontró ningún archivo .xlsx en el repositorio. Por favor, sube tu base de datos."
@@ -54,6 +53,10 @@ def cargar_datos_csv():
         if 'VistaAdministracion' in df.columns:
             df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
             
+        # 🟢 NUEVA VARIABLE AUTORIZADA PARA OPTIMIZACIÓN DE BÚSQUEDA
+        # Concatenamos toda la fila en una sola cadena en minúsculas durante la carga (se hace 1 sola vez)
+        df['Texto_Busqueda_Rapida'] = df.fillna('').astype(str).agg(' '.join, axis=1).str.lower()
+            
         # Construcción en memoria de las variables de búsqueda
         col_gen = 'DenominacionGenerica' if 'DenominacionGenerica' in df.columns else df.columns[0]
         col_forma = 'FormaFarmaceutica' if 'FormaFarmaceutica' in df.columns else df.columns[0]
@@ -61,7 +64,7 @@ def cargar_datos_csv():
         df['Texto_Limpio_Generica'] = df[col_gen].apply(limpiar_texto_para_cruce)
         df['Texto_Limpio_Forma'] = df[col_forma].apply(limpiar_texto_para_cruce)
         
-        # 🟢 PASO 1 LÓGICO: Combinación de Sustancia y Forma
+        # PASO 1 LÓGICO: Combinación de Sustancia y Forma
         df['Filtro_Paso1'] = df['Texto_Limpio_Generica'] + " " + df['Texto_Limpio_Forma']
         
         cols_search = [c for c in ['DenominacionGenerica', 'FormaFarmaceutica', 'Presentacion', 'FarmacoConcentracion'] if c in df.columns]
@@ -131,6 +134,9 @@ if df_cofepris is None:
     st.error(f"🚨 Error al leer la base de datos: **{error_carga}**")
     st.stop()
 
+# Detectar dinámicamente la columna que almacena el Registro para evitar bugs
+col_registro = 'NumeroRegistro' if 'NumeroRegistro' in df_cofepris.columns else df_cofepris.columns[0]
+
 tab1, tab2 = st.tabs(["🔍 Buscador y Detalles", "⚙️ Cruce SSA (Persistente)"])
 
 # ------------------------------------------
@@ -160,9 +166,9 @@ with tab1:
 
     df_mostrar = df_cofepris.copy()
     
+    # Búsqueda optimizada (Uso de la variable autorizada)
     if busqueda_libre:
-        mask = df_mostrar.astype(str).apply(lambda x: x.str.contains(busqueda_libre, case=False, na=False)).any(axis=1)
-        df_mostrar = df_mostrar[mask]
+        df_mostrar = df_mostrar[df_mostrar['Texto_Busqueda_Rapida'].str.contains(busqueda_libre.lower(), na=False)]
 
     if len(filtro_estado) > 0:
         df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
@@ -178,11 +184,12 @@ with tab1:
         
     if busqueda_mult.strip():
         regs = [r.strip() for r in busqueda_mult.replace(',', '\n').split('\n') if r.strip()]
-        if regs and 'NumeroRegistro' in df_mostrar.columns:
+        if regs:
             patron_regex = '|'.join([re.escape(r) for r in regs])
-            df_mostrar = df_mostrar[df_mostrar['NumeroRegistro'].astype(str).str.contains(patron_regex, case=False, na=False)]
+            # Se usa col_registro dinámico en lugar de "NumeroRegistro" en crudo
+            df_mostrar = df_mostrar[df_mostrar[col_registro].astype(str).str.contains(patron_regex, case=False, na=False)]
 
-    cols_ocultar = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Filtro_Paso1', 'Busqueda_COFEPRIS', 'UUID', 'ClaveCompendio']
+    cols_ocultar = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Filtro_Paso1', 'Busqueda_COFEPRIS', 'UUID', 'ClaveCompendio', 'Texto_Busqueda_Rapida']
     df_vista = df_mostrar.drop(columns=[c for c in cols_ocultar if c in df_mostrar.columns])
     
     st.markdown(f"**Resultados encontrados:** {len(df_vista):,}")
@@ -204,17 +211,18 @@ with tab1:
     st.markdown("---")
     st.markdown("### 📄 Detalle Extendido de Registro")
     
-    if not df_mostrar.empty and 'NumeroRegistro' in df_mostrar.columns:
-        opciones_registro = df_mostrar['NumeroRegistro'].dropna().astype(str).tolist()
+    # Bug Fix: Verificación corregida usando el detector de columna dinámica (col_registro)
+    if not df_mostrar.empty:
+        opciones_registro = df_mostrar[col_registro].dropna().astype(str).tolist()
         seleccion = st.selectbox("Seleccione un Registro Sanitario para ver su ficha técnica completa:", 
                                options=["-- Seleccione --"] + opciones_registro)
         
         if seleccion != "-- Seleccione --":
-            detalle = df_mostrar[df_mostrar['NumeroRegistro'].astype(str) == seleccion].iloc[0]
+            detalle = df_mostrar[df_mostrar[col_registro].astype(str) == seleccion].iloc[0]
             
             d_distintiva = detalle.get('DenominacionDistintiva', 'GENÉRICO')
             d_estado = detalle.get('Estado', 'VIGENTE')
-            d_reg = detalle.get('NumeroRegistro', 'N/A')
+            d_reg = detalle.get(col_registro, 'N/A')
             d_fecha = detalle.get('FechaEmision', 'N/A')
             d_titular = detalle.get('Titular', 'N/A')
             d_generica = detalle.get('DenominacionGenerica', 'N/A')
@@ -260,7 +268,6 @@ with tab2:
             with st.spinner("Analizando múltiples coincidencias en 2 pasos..."):
                 res_vigentes, res_otros, res_score = [], [], []
                 
-                col_registro = 'NumeroRegistro' if 'NumeroRegistro' in df_cofepris.columns else df_cofepris.columns[0]
                 col_estado = 'Estado' if 'Estado' in df_cofepris.columns else df_cofepris.columns[0]
 
                 for _, row in df_ssa_temp.iterrows():
