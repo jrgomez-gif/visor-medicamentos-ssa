@@ -21,7 +21,6 @@ st.markdown("""
     .stMetric { background-color: #f8f9fa; padding: 10px; border-radius: 10px; border-left: 5px solid #B38E5D; }
     .stButton>button { background-color: #B38E5D; color: white; border: none; width: 100%; }
     .stButton>button:hover { background-color: #6F1827; color: white; }
-    .detalle-card { background-color: #ffffff; padding: 20px; border-radius: 10px; border: 1px solid #dee2e6; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }
     </style>
 """, unsafe_allow_html=True)
 
@@ -50,24 +49,19 @@ def cargar_datos_csv():
         except Exception as e:
             return None, f"Error al leer el Excel: {str(e)}"
             
-        if 'VistaAdministracion' in df.columns:
-            df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
-            
-        # 🟢 NUEVA VARIABLE AUTORIZADA PARA OPTIMIZACIÓN DE BÚSQUEDA
-        # Concatenamos toda la fila en una sola cadena en minúsculas durante la carga (se hace 1 sola vez)
+        # 🟢 VARIABLE AUTORIZADA PARA OPTIMIZACIÓN DE BÚSQUEDA
         df['Texto_Busqueda_Rapida'] = df.fillna('').astype(str).agg(' '.join, axis=1).str.lower()
             
-        # Construcción en memoria de las variables de búsqueda
-        col_gen = 'DenominacionGenerica' if 'DenominacionGenerica' in df.columns else df.columns[0]
-        col_forma = 'FormaFarmaceutica' if 'FormaFarmaceutica' in df.columns else df.columns[0]
+        # Uso de los nombres exactos proporcionados por el usuario
+        col_gen = 'Denominacion Generica' if 'Denominacion Generica' in df.columns else df.columns[0]
+        col_forma = 'Forma Farmaceutica' if 'Forma Farmaceutica' in df.columns else df.columns[0]
         
         df['Texto_Limpio_Generica'] = df[col_gen].apply(limpiar_texto_para_cruce)
         df['Texto_Limpio_Forma'] = df[col_forma].apply(limpiar_texto_para_cruce)
         
-        # PASO 1 LÓGICO: Combinación de Sustancia y Forma
         df['Filtro_Paso1'] = df['Texto_Limpio_Generica'] + " " + df['Texto_Limpio_Forma']
         
-        cols_search = [c for c in ['DenominacionGenerica', 'FormaFarmaceutica', 'Presentacion', 'FarmacoConcentracion'] if c in df.columns]
+        cols_search = [c for c in ['Denominacion Generica', 'Forma Farmaceutica', 'Presentación', 'Farmaco Concentración'] if c in df.columns]
         
         if cols_search:
             df['Busqueda_COFEPRIS'] = df[cols_search].fillna('').astype(str).apply(lambda row: ' '.join(row), axis=1).apply(limpiar_texto_para_cruce)
@@ -105,13 +99,11 @@ with st.sidebar:
     st.markdown("### 📖 Guía de Uso")
     st.markdown("""
     **¿Qué es este Visor Inteligente?**
-    Es una herramienta analítica avanzada diseñada para explorar la base de datos de Registros Sanitarios de COFEPRIS. Integra un motor de búsqueda ultra-rápido y un sistema de análisis de redes difusas (Fuzzy Matching) para cruzar bases de datos externas de forma automatizada.
+    Es una herramienta analítica avanzada diseñada para explorar la base de datos de Registros Sanitarios de COFEPRIS.
     
-    **🔍 Buscador:** Use filtros múltiples o la búsqueda por registros específicos (separados por comas) para aislar información.
+    **🔍 Buscador:** Use filtros múltiples o la búsqueda por registros específicos.
     
-    **⚙️ Cruce SSA:**
-    1. Suba el archivo (CSV/Excel) de la Secretaría de Salud u otra institución.
-    2. Ejecute el análisis para encontrar coincidencias probables basadas en el principio activo y la forma farmacéutica.
+    **⚙️ Cruce SSA:** Suba un archivo para encontrar coincidencias probables basadas en el principio activo y la forma farmacéutica.
     """)
     st.markdown("---")
     
@@ -123,7 +115,7 @@ with st.sidebar:
         st.session_state.resultado_ssa = None
         st.rerun()
         
-    st.markdown("<br><div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Trámites Electrónicos COFEPRIS<br>Visor Inteligente v2.4</div>", unsafe_allow_html=True)
+    st.markdown("<br><div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Trámites Electrónicos COFEPRIS<br>Visor Inteligente v2.5</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 5. CUERPO PRINCIPAL
@@ -134,22 +126,19 @@ if df_cofepris is None:
     st.error(f"🚨 Error al leer la base de datos: **{error_carga}**")
     st.stop()
 
-# Detectar dinámicamente la columna que almacena el Registro para evitar bugs
-col_registro = 'NumeroRegistro' if 'NumeroRegistro' in df_cofepris.columns else df_cofepris.columns[0]
-
-tab1, tab2 = st.tabs(["🔍 Buscador y Detalles", "⚙️ Cruce SSA (Persistente)"])
+tab1, tab2 = st.tabs(["🔍 Buscador Interactivo", "⚙️ Cruce SSA (Persistente)"])
 
 # ------------------------------------------
-# PESTAÑA 1: BUSCADOR Y DETALLE POR REGISTRO
+# PESTAÑA 1: BUSCADOR
 # ------------------------------------------
 with tab1:
     st.markdown("### 🎛️ Panel de Búsqueda y Filtros")
-    st.info("💡 **Tip de Búsqueda:** Ingresa varios registros separados por comas y presiona **Ctrl + Enter** para ejecutar.")
     
     col_search1, col_search2 = st.columns(2)
     busqueda_libre = col_search1.text_input("🔍 Búsqueda global (Nombre, Sustancia, etc.):", key="busqueda_libre")
     busqueda_mult = col_search2.text_area("📋 Búsqueda Múltiple de Registros (separe con comas):", placeholder="Ej: 363M2018 SSA, 004M2020 SSA", height=68, key="busqueda_mult")
     
+    @st.cache_data
     def get_opciones(columna):
         if columna in df_cofepris.columns:
             return sorted(df_cofepris[columna].dropna().unique().tolist())
@@ -157,42 +146,47 @@ with tab1:
 
     c1, c2, c3, c4 = st.columns(4)
     filtro_estado = c1.multiselect("Estado:", get_opciones('Estado'), key="filtro_estado")
-    filtro_forma = c2.multiselect("Forma Farmacéutica:", get_opciones('FormaFarmaceutica'), key="filtro_forma")
-    filtro_via = c3.multiselect("Vía de Administración:", get_opciones('ViaAdministracion'), key="filtro_via")
+    filtro_forma = c2.multiselect("Forma Farmacéutica:", get_opciones('Forma Farmaceutica'), key="filtro_forma")
+    filtro_via = c3.multiselect("Vía de Administración:", get_opciones('Vista Administración'), key="filtro_via")
     filtro_titular = c4.multiselect("Titular del Registro:", get_opciones('Titular'), key="filtro_titular")
 
-    col_btn1, _ = st.columns([1, 4])
-    col_btn1.button("♻️ Limpiar Filtros", on_click=reset_filters, use_container_width=True)
+    st.button("♻️ Limpiar Filtros", on_click=reset_filters, use_container_width=True)
 
     df_mostrar = df_cofepris.copy()
+    filtros_activos = False
     
-    # Búsqueda optimizada (Uso de la variable autorizada)
     if busqueda_libre:
         df_mostrar = df_mostrar[df_mostrar['Texto_Busqueda_Rapida'].str.contains(busqueda_libre.lower(), na=False)]
+        filtros_activos = True
 
     if len(filtro_estado) > 0:
         df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
+        filtros_activos = True
         
     if len(filtro_forma) > 0:
-        df_mostrar = df_mostrar[df_mostrar['FormaFarmaceutica'].isin(filtro_forma)]
+        df_mostrar = df_mostrar[df_mostrar['Forma Farmaceutica'].isin(filtro_forma)]
+        filtros_activos = True
         
     if len(filtro_via) > 0:
-        df_mostrar = df_mostrar[df_mostrar['ViaAdministracion'].isin(filtro_via)]
+        df_mostrar = df_mostrar[df_mostrar['Vista Administración'].isin(filtro_via)]
+        filtros_activos = True
         
     if len(filtro_titular) > 0:
         df_mostrar = df_mostrar[df_mostrar['Titular'].isin(filtro_titular)]
+        filtros_activos = True
         
     if busqueda_mult.strip():
         regs = [r.strip() for r in busqueda_mult.replace(',', '\n').split('\n') if r.strip()]
-        if regs:
+        if regs and 'Número de Registro' in df_mostrar.columns:
             patron_regex = '|'.join([re.escape(r) for r in regs])
-            # Se usa col_registro dinámico en lugar de "NumeroRegistro" en crudo
-            df_mostrar = df_mostrar[df_mostrar[col_registro].astype(str).str.contains(patron_regex, case=False, na=False)]
+            df_mostrar = df_mostrar[df_mostrar['Número de Registro'].astype(str).str.contains(patron_regex, case=False, na=False)]
+            filtros_activos = True
 
-    cols_ocultar = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Filtro_Paso1', 'Busqueda_COFEPRIS', 'UUID', 'ClaveCompendio', 'Texto_Busqueda_Rapida']
+    # Ocultamos las columnas de procesamiento lógico
+    cols_ocultar = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Filtro_Paso1', 'Busqueda_COFEPRIS', 'Texto_Busqueda_Rapida']
     df_vista = df_mostrar.drop(columns=[c for c in cols_ocultar if c in df_mostrar.columns])
     
-    st.markdown(f"**Resultados encontrados:** {len(df_vista):,}")
+    st.markdown(f"**Total de resultados filtrados:** {len(df_vista):,}")
     
     if not df_vista.empty:
         output = io.BytesIO()
@@ -206,53 +200,12 @@ with tab1:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
-    st.dataframe(df_vista, use_container_width=True, height=300)
-
-    st.markdown("---")
-    st.markdown("### 📄 Detalle Extendido de Registro")
-    
-    # Bug Fix: Verificación corregida usando el detector de columna dinámica (col_registro)
-    if not df_mostrar.empty:
-        opciones_registro = df_mostrar[col_registro].dropna().astype(str).tolist()
-        seleccion = st.selectbox("Seleccione un Registro Sanitario para ver su ficha técnica completa:", 
-                               options=["-- Seleccione --"] + opciones_registro)
-        
-        if seleccion != "-- Seleccione --":
-            detalle = df_mostrar[df_mostrar[col_registro].astype(str) == seleccion].iloc[0]
-            
-            d_distintiva = detalle.get('DenominacionDistintiva', 'GENÉRICO')
-            d_estado = detalle.get('Estado', 'VIGENTE')
-            d_reg = detalle.get(col_registro, 'N/A')
-            d_fecha = detalle.get('FechaEmision', 'N/A')
-            d_titular = detalle.get('Titular', 'N/A')
-            d_generica = detalle.get('DenominacionGenerica', 'N/A')
-            d_forma = detalle.get('FormaFarmaceutica', 'N/A')
-            d_via = detalle.get('ViaAdministracion', 'N/A')
-            d_conc = detalle.get('FarmacoConcentracion', 'N/A')
-            d_pres = detalle.get('Presentacion', 'N/A')
-            
-            if pd.isna(d_distintiva) or str(d_distintiva).strip() == '': d_distintiva = 'GENÉRICO'
-            
-            st.markdown(f"""<div class="detalle-card">
-                <div style="display: flex; justify-content: space-between;">
-                    <h2 style="color: #6F1827; margin:0;">{d_distintiva}</h2>
-                    <span style="background: #B38E5D; color: white; padding: 5px 15px; border-radius: 20px;">{d_estado}</span>
-                </div>
-                <hr>
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
-                    <div><b>Registro:</b><br>{d_reg}</div>
-                    <div><b>Vigencia:</b><br>{d_fecha}</div>
-                    <div><b>Titular:</b><br>{d_titular}</div>
-                    <div style="grid-column: span 3;"><b>Sustancia(s):</b><br>{d_generica}</div>
-                    <div><b>Forma Farmacéutica:</b><br>{d_forma}</div>
-                    <div><b>Vía Admón:</b><br>{d_via}</div>
-                    <div><b>Concentración:</b><br>{d_conc}</div>
-                </div>
-                <br>
-                <b>Presentación Autorizada:</b><br>{d_pres}
-            </div>""", unsafe_allow_html=True)
-    else:
-        st.info("No hay registros que coincidan con los filtros para mostrar detalles.")
+        # Optimización de renderizado UI: Si no hay filtros, mostramos solo una muestra visual para no colgar la página
+        if not filtros_activos and len(df_vista) > 100:
+            st.info("Mostrando los primeros 100 registros. Usa los filtros o el buscador para refinar, o descarga el Excel para ver todos.")
+            st.dataframe(df_vista.head(100), use_container_width=True, height=400)
+        else:
+            st.dataframe(df_vista, use_container_width=True, height=400)
 
 # ------------------------------------------
 # PESTAÑA 2: CRUCE SSA (PERSISTENTE)
@@ -265,30 +218,26 @@ with tab2:
         col_descripcion = st.selectbox("¿Qué columna de tu archivo contiene la descripción del medicamento a cruzar?", df_ssa_temp.columns.tolist())
         
         if st.button("🚀 Iniciar Análisis de Similitud"):
-            with st.spinner("Analizando múltiples coincidencias en 2 pasos..."):
+            with st.spinner("Analizando coincidencias..."):
                 res_vigentes, res_otros, res_score = [], [], []
                 
+                col_registro = 'Número de Registro' if 'Número de Registro' in df_cofepris.columns else df_cofepris.columns[0]
                 col_estado = 'Estado' if 'Estado' in df_cofepris.columns else df_cofepris.columns[0]
 
                 for _, row in df_ssa_temp.iterrows():
                     q_original = str(row[col_descripcion])
                     q = limpiar_texto_para_cruce(q_original)
                     
-                    # PASO 1: Candado del Principio Activo + Forma Farmacéutica (Laxo 80%)
                     scores_paso1 = df_cofepris['Filtro_Paso1'].apply(lambda x: fuzz.token_set_ratio(q, x))
                     candidatos = df_cofepris[scores_paso1 >= 80].copy()
                     
                     if not candidatos.empty:
-                        # PASO 2: Similitud global contra todo el registro (Sustancia+Forma+Concentracion+Presentacion)
                         candidatos['Score_Final'] = candidatos['Busqueda_COFEPRIS'].apply(lambda x: fuzz.token_set_ratio(q, x))
-                        
-                        # Filtramos solo los que superan el Umbral seleccionado por el usuario
                         matches_finales = candidatos[candidatos['Score_Final'] >= umbral]
                         
                         if not matches_finales.empty:
                             max_score = matches_finales['Score_Final'].max()
                             
-                            # Separar por VIGENTE y RESTO
                             mask_vigente = matches_finales[col_estado].astype(str).str.upper().str.contains('VIGENTE', na=False)
                             df_vigentes = matches_finales[mask_vigente]
                             df_otros = matches_finales[~mask_vigente]
@@ -301,12 +250,10 @@ with tab2:
                             res_score.append(round(max_score, 1))
                             continue
                     
-                    # Si no hay matches que superen los candados
                     res_vigentes.append("Sin Match")
                     res_otros.append("Sin Match")
                     res_score.append(0)
 
-                # Agregamos las nuevas columnas al dataframe original
                 df_ssa_temp['Registros_Vigentes'] = res_vigentes
                 df_ssa_temp['Registros_Otros'] = res_otros
                 df_ssa_temp['Similitud_%'] = res_score
