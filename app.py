@@ -39,24 +39,29 @@ def limpiar_texto_para_cruce(texto):
 @st.cache_data
 def cargar_datos_csv():
     try:
-        # Modificado: Buscamos archivos .xlsx en lugar de .csv
+        # Modificación exclusiva aquí: buscar y leer archivo de Excel
         archivos_csv = glob.glob("*.xlsx")
         if not archivos_csv:
-            return None, "No se encontró ningún archivo .xlsx en el repositorio. Por favor, sube tu archivo de Excel a GitHub."
+            return None, "No se encontró ningún archivo .xlsx en el repositorio. Por favor, sube tu base de datos."
             
         ruta = archivos_csv[0]
         
-        # Modificado: Leemos el archivo usando pandas.read_excel
-        df = pd.read_excel(ruta, dtype=str)
+        try:
+            df = pd.read_excel(ruta, dtype=str)
+        except Exception as e:
+            return None, f"Error al leer el Excel: {str(e)}"
             
         if 'VistaAdministracion' in df.columns:
             df = df.rename(columns={'VistaAdministracion': 'ViaAdministracion'})
             
+        # Construcción en memoria de las variables de búsqueda
         col_gen = 'DenominacionGenerica' if 'DenominacionGenerica' in df.columns else df.columns[0]
         col_forma = 'FormaFarmaceutica' if 'FormaFarmaceutica' in df.columns else df.columns[0]
         
         df['Texto_Limpio_Generica'] = df[col_gen].apply(limpiar_texto_para_cruce)
         df['Texto_Limpio_Forma'] = df[col_forma].apply(limpiar_texto_para_cruce)
+        
+        # 🟢 PASO 1 LÓGICO: Combinación de Sustancia y Forma
         df['Filtro_Paso1'] = df['Texto_Limpio_Generica'] + " " + df['Texto_Limpio_Forma']
         
         cols_search = [c for c in ['DenominacionGenerica', 'FormaFarmaceutica', 'Presentacion', 'FarmacoConcentracion'] if c in df.columns]
@@ -96,8 +101,14 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📖 Guía de Uso")
     st.markdown("""
-    **🔍 Buscador:** Use filtros o búsqueda múltiple.
-    **⚙️ Cruce SSA:** Suba un archivo externo para comparar contra la base de datos maestra de Excel cargada.
+    **¿Qué es este Visor Inteligente?**
+    Es una herramienta analítica avanzada diseñada para explorar la base de datos de Registros Sanitarios de COFEPRIS. Integra un motor de búsqueda ultra-rápido y un sistema de análisis de redes difusas (Fuzzy Matching) para cruzar bases de datos externas de forma automatizada.
+    
+    **🔍 Buscador:** Use filtros múltiples o la búsqueda por registros específicos (separados por comas) para aislar información.
+    
+    **⚙️ Cruce SSA:**
+    1. Suba el archivo (CSV/Excel) de la Secretaría de Salud u otra institución.
+    2. Ejecute el análisis para encontrar coincidencias probables basadas en el principio activo y la forma farmacéutica.
     """)
     st.markdown("---")
     
@@ -109,7 +120,7 @@ with st.sidebar:
         st.session_state.resultado_ssa = None
         st.rerun()
         
-    st.markdown("<br><div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Visor Inteligente v2.4</div>", unsafe_allow_html=True)
+    st.markdown("<br><div style='text-align: center; color: #B38E5D; font-size: 0.85em;'>Trámites Electrónicos COFEPRIS<br>Visor Inteligente v2.4</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 5. CUERPO PRINCIPAL
@@ -117,16 +128,21 @@ with st.sidebar:
 st.markdown("<h1>Visor Inteligente de Medicamentos</h1>", unsafe_allow_html=True)
 
 if df_cofepris is None:
-    st.error(f"🚨 Error al leer la base de datos (.xlsx): **{error_carga}**")
+    st.error(f"🚨 Error al leer la base de datos: **{error_carga}**")
     st.stop()
 
 tab1, tab2 = st.tabs(["🔍 Buscador y Detalles", "⚙️ Cruce SSA (Persistente)"])
 
+# ------------------------------------------
+# PESTAÑA 1: BUSCADOR Y DETALLE POR REGISTRO
+# ------------------------------------------
 with tab1:
     st.markdown("### 🎛️ Panel de Búsqueda y Filtros")
+    st.info("💡 **Tip de Búsqueda:** Ingresa varios registros separados por comas y presiona **Ctrl + Enter** para ejecutar.")
+    
     col_search1, col_search2 = st.columns(2)
-    busqueda_libre = col_search1.text_input("🔍 Búsqueda global:", key="busqueda_libre")
-    busqueda_mult = col_search2.text_area("📋 Búsqueda Múltiple (registros separados por comas):", height=68, key="busqueda_mult")
+    busqueda_libre = col_search1.text_input("🔍 Búsqueda global (Nombre, Sustancia, etc.):", key="busqueda_libre")
+    busqueda_mult = col_search2.text_area("📋 Búsqueda Múltiple de Registros (separe con comas):", placeholder="Ej: 363M2018 SSA, 004M2020 SSA", height=68, key="busqueda_mult")
     
     def get_opciones(columna):
         if columna in df_cofepris.columns:
@@ -139,7 +155,8 @@ with tab1:
     filtro_via = c3.multiselect("Vía de Administración:", get_opciones('ViaAdministracion'), key="filtro_via")
     filtro_titular = c4.multiselect("Titular del Registro:", get_opciones('Titular'), key="filtro_titular")
 
-    st.button("♻️ Limpiar Filtros", on_click=reset_filters)
+    col_btn1, _ = st.columns([1, 4])
+    col_btn1.button("♻️ Limpiar Filtros", on_click=reset_filters, use_container_width=True)
 
     df_mostrar = df_cofepris.copy()
     
@@ -147,10 +164,17 @@ with tab1:
         mask = df_mostrar.astype(str).apply(lambda x: x.str.contains(busqueda_libre, case=False, na=False)).any(axis=1)
         df_mostrar = df_mostrar[mask]
 
-    if filtro_estado: df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
-    if filtro_forma: df_mostrar = df_mostrar[df_mostrar['FormaFarmaceutica'].isin(filtro_forma)]
-    if filtro_via: df_mostrar = df_mostrar[df_mostrar['ViaAdministracion'].isin(filtro_via)]
-    if filtro_titular: df_mostrar = df_mostrar[df_mostrar['Titular'].isin(filtro_titular)]
+    if len(filtro_estado) > 0:
+        df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
+        
+    if len(filtro_forma) > 0:
+        df_mostrar = df_mostrar[df_mostrar['FormaFarmaceutica'].isin(filtro_forma)]
+        
+    if len(filtro_via) > 0:
+        df_mostrar = df_mostrar[df_mostrar['ViaAdministracion'].isin(filtro_via)]
+        
+    if len(filtro_titular) > 0:
+        df_mostrar = df_mostrar[df_mostrar['Titular'].isin(filtro_titular)]
         
     if busqueda_mult.strip():
         regs = [r.strip() for r in busqueda_mult.replace(',', '\n').split('\n') if r.strip()]
@@ -158,10 +182,23 @@ with tab1:
             patron_regex = '|'.join([re.escape(r) for r in regs])
             df_mostrar = df_mostrar[df_mostrar['NumeroRegistro'].astype(str).str.contains(patron_regex, case=False, na=False)]
 
-    cols_ocultar = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Filtro_Paso1', 'Busqueda_COFEPRIS']
+    cols_ocultar = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Filtro_Paso1', 'Busqueda_COFEPRIS', 'UUID', 'ClaveCompendio']
     df_vista = df_mostrar.drop(columns=[c for c in cols_ocultar if c in df_mostrar.columns])
     
-    st.markdown(f"**Registros cargados desde Excel:** {len(df_cofepris):,} | **Resultados filtrados:** {len(df_vista):,}")
+    st.markdown(f"**Resultados encontrados:** {len(df_vista):,}")
+    
+    if not df_vista.empty:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_vista.to_excel(writer, index=False, sheet_name='Registros_Sanitarios')
+        
+        st.download_button(
+            label="📥 Descargar Tabla (Excel)",
+            data=output.getvalue(),
+            file_name="Cofepris_Registros_Filtrados.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
     st.dataframe(df_vista, use_container_width=True, height=300)
 
     st.markdown("---")
@@ -169,56 +206,122 @@ with tab1:
     
     if not df_mostrar.empty and 'NumeroRegistro' in df_mostrar.columns:
         opciones_registro = df_mostrar['NumeroRegistro'].dropna().astype(str).tolist()
-        seleccion = st.selectbox("Seleccione un Registro:", ["-- Seleccione --"] + opciones_registro)
+        seleccion = st.selectbox("Seleccione un Registro Sanitario para ver su ficha técnica completa:", 
+                               options=["-- Seleccione --"] + opciones_registro)
         
         if seleccion != "-- Seleccione --":
             detalle = df_mostrar[df_mostrar['NumeroRegistro'].astype(str) == seleccion].iloc[0]
+            
+            d_distintiva = detalle.get('DenominacionDistintiva', 'GENÉRICO')
+            d_estado = detalle.get('Estado', 'VIGENTE')
+            d_reg = detalle.get('NumeroRegistro', 'N/A')
+            d_fecha = detalle.get('FechaEmision', 'N/A')
+            d_titular = detalle.get('Titular', 'N/A')
+            d_generica = detalle.get('DenominacionGenerica', 'N/A')
+            d_forma = detalle.get('FormaFarmaceutica', 'N/A')
+            d_via = detalle.get('ViaAdministracion', 'N/A')
+            d_conc = detalle.get('FarmacoConcentracion', 'N/A')
+            d_pres = detalle.get('Presentacion', 'N/A')
+            
+            if pd.isna(d_distintiva) or str(d_distintiva).strip() == '': d_distintiva = 'GENÉRICO'
+            
             st.markdown(f"""<div class="detalle-card">
-                <h2 style="color: #6F1827;">{detalle.get('DenominacionDistintiva', 'GENÉRICO')}</h2>
-                <p><b>Registro:</b> {detalle.get('NumeroRegistro', 'N/A')} | <b>Estado:</b> {detalle.get('Estado', 'N/A')}</p>
-                <p><b>Titular:</b> {detalle.get('Titular', 'N/A')}</p>
-                <p><b>Sustancia:</b> {detalle.get('DenominacionGenerica', 'N/A')}</p>
-                <p><b>Forma:</b> {detalle.get('FormaFarmaceutica', 'N/A')} | <b>Vía:</b> {detalle.get('ViaAdministracion', 'N/A')}</p>
-                <p><b>Presentación:</b> {detalle.get('Presentacion', 'N/A')}</p>
+                <div style="display: flex; justify-content: space-between;">
+                    <h2 style="color: #6F1827; margin:0;">{d_distintiva}</h2>
+                    <span style="background: #B38E5D; color: white; padding: 5px 15px; border-radius: 20px;">{d_estado}</span>
+                </div>
+                <hr>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
+                    <div><b>Registro:</b><br>{d_reg}</div>
+                    <div><b>Vigencia:</b><br>{d_fecha}</div>
+                    <div><b>Titular:</b><br>{d_titular}</div>
+                    <div style="grid-column: span 3;"><b>Sustancia(s):</b><br>{d_generica}</div>
+                    <div><b>Forma Farmacéutica:</b><br>{d_forma}</div>
+                    <div><b>Vía Admón:</b><br>{d_via}</div>
+                    <div><b>Concentración:</b><br>{d_conc}</div>
+                </div>
+                <br>
+                <b>Presentación Autorizada:</b><br>{d_pres}
             </div>""", unsafe_allow_html=True)
+    else:
+        st.info("No hay registros que coincidan con los filtros para mostrar detalles.")
 
+# ------------------------------------------
+# PESTAÑA 2: CRUCE SSA (PERSISTENTE)
+# ------------------------------------------
 with tab2:
     if archivo_ssa:
         df_ssa_temp = pd.read_csv(archivo_ssa, encoding='latin1', dtype=str) if archivo_ssa.name.endswith('.csv') else pd.read_excel(archivo_ssa, dtype=str)
-        col_descripcion = st.selectbox("Columna de descripción:", df_ssa_temp.columns.tolist())
         
-        if st.button("🚀 Iniciar Análisis"):
-            with st.spinner("Analizando coincidencias..."):
+        st.markdown("### 🎯 Configuración del Cruce")
+        col_descripcion = st.selectbox("¿Qué columna de tu archivo contiene la descripción del medicamento a cruzar?", df_ssa_temp.columns.tolist())
+        
+        if st.button("🚀 Iniciar Análisis de Similitud"):
+            with st.spinner("Analizando múltiples coincidencias en 2 pasos..."):
                 res_vigentes, res_otros, res_score = [], [], []
+                
                 col_registro = 'NumeroRegistro' if 'NumeroRegistro' in df_cofepris.columns else df_cofepris.columns[0]
                 col_estado = 'Estado' if 'Estado' in df_cofepris.columns else df_cofepris.columns[0]
 
                 for _, row in df_ssa_temp.iterrows():
-                    q = limpiar_texto_para_cruce(str(row[col_descripcion]))
+                    q_original = str(row[col_descripcion])
+                    q = limpiar_texto_para_cruce(q_original)
+                    
+                    # PASO 1: Candado del Principio Activo + Forma Farmacéutica (Laxo 80%)
                     scores_paso1 = df_cofepris['Filtro_Paso1'].apply(lambda x: fuzz.token_set_ratio(q, x))
                     candidatos = df_cofepris[scores_paso1 >= 80].copy()
                     
                     if not candidatos.empty:
+                        # PASO 2: Similitud global contra todo el registro (Sustancia+Forma+Concentracion+Presentacion)
                         candidatos['Score_Final'] = candidatos['Busqueda_COFEPRIS'].apply(lambda x: fuzz.token_set_ratio(q, x))
+                        
+                        # Filtramos solo los que superan el Umbral seleccionado por el usuario
                         matches_finales = candidatos[candidatos['Score_Final'] >= umbral]
                         
                         if not matches_finales.empty:
+                            max_score = matches_finales['Score_Final'].max()
+                            
+                            # Separar por VIGENTE y RESTO
                             mask_vigente = matches_finales[col_estado].astype(str).str.upper().str.contains('VIGENTE', na=False)
-                            res_vigentes.append(", ".join(matches_finales[mask_vigente][col_registro].unique()))
-                            res_otros.append(", ".join(matches_finales[~mask_vigente][col_registro].unique()))
-                            res_score.append(round(matches_finales['Score_Final'].max(), 1))
+                            df_vigentes = matches_finales[mask_vigente]
+                            df_otros = matches_finales[~mask_vigente]
+                            
+                            regs_vigentes = ", ".join(df_vigentes[col_registro].dropna().astype(str).unique())
+                            regs_otros = ", ".join(df_otros[col_registro].dropna().astype(str).unique())
+                            
+                            res_vigentes.append(regs_vigentes if regs_vigentes else "Sin Vigentes")
+                            res_otros.append(regs_otros if regs_otros else "Sin Otros")
+                            res_score.append(round(max_score, 1))
                             continue
-                    res_vigentes.append("Sin Match"); res_otros.append("Sin Match"); res_score.append(0)
+                    
+                    # Si no hay matches que superen los candados
+                    res_vigentes.append("Sin Match")
+                    res_otros.append("Sin Match")
+                    res_score.append(0)
 
+                # Agregamos las nuevas columnas al dataframe original
                 df_ssa_temp['Registros_Vigentes'] = res_vigentes
                 df_ssa_temp['Registros_Otros'] = res_otros
                 df_ssa_temp['Similitud_%'] = res_score
+                
                 st.session_state.resultado_ssa = df_ssa_temp
-                st.rerun()
+                st.session_state.metricas_ssa = {
+                    "Total": len(df_ssa_temp),
+                    "Encontrados": len(df_ssa_temp[df_ssa_temp['Similitud_%'] > 0])
+                }
 
     if st.session_state.resultado_ssa is not None:
+        st.markdown("### 📊 Resultado del Último Análisis")
+        m = st.session_state.metricas_ssa
+        col1, col2 = st.columns(2)
+        col1.metric("Total Analizados", m["Total"])
+        col2.metric("Múltiples Matches Encontrados", m["Encontrados"])
+        
         st.dataframe(st.session_state.resultado_ssa, use_container_width=True)
+        
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             st.session_state.resultado_ssa.to_excel(writer, index=False)
-        st.download_button("📥 Descargar Reporte", output.getvalue(), "Cruce_SSA.xlsx")
+        st.download_button("📥 Descargar Reporte de Cruce", output.getvalue(), "Cruce_SSA_Multiples.xlsx")
+    else:
+        st.info("No hay análisis activo. Sube un archivo, selecciona la columna de descripción y presiona 'Iniciar'.")
