@@ -27,12 +27,17 @@ st.markdown("""
 # ==========================================
 # 2. FUNCIONES DE LIMPIEZA Y CARGA
 # ==========================================
+_RE_CARACTERES = re.compile(r'[^a-z0-9ñáéíóú\s]')
+_RE_STOPWORDS = re.compile(
+    r'\b(caja|carton|cartón|envase|burbuja|frasco|ampula|ámpula|'
+    r'con|que|contiene|cada|de|en|el|la|los|las|un|una|para|instructivo|anexo|o|y)\b'
+)
+
 def limpiar_texto_para_cruce(texto):
     if pd.isna(texto): return ""
     t = str(texto).lower().replace('/', ' ').replace('-', ' ')
-    t = re.sub(r'[^a-z0-9ñáéíóú\s]', ' ', t)
-    stopwords = r'\b(caja|carton|cartón|envase|burbuja|frasco|ampula|ámpula|con|que|contiene|cada|de|en|el|la|los|las|un|una|para|instructivo|anexo|o|y)\b'
-    t = re.sub(stopwords, ' ', t)
+    t = _RE_CARACTERES.sub(' ', t)
+    t = _RE_STOPWORDS.sub(' ', t)
     return " ".join(t.split())
 
 @st.cache_data
@@ -154,10 +159,10 @@ with tab1:
     col_btn1, _ = st.columns([1, 4])
     col_btn1.button("♻️ Limpiar Filtros", on_click=reset_filters, use_container_width=True)
 
-    df_mostrar = df_cofepris.copy()
-    
+    df_mostrar = df_cofepris
+
     if busqueda_libre:
-        df_mostrar = df_mostrar[df_mostrar['Texto_Busqueda_Rapida'].str.contains(busqueda_libre.lower(), na=False)]
+        df_mostrar = df_mostrar[df_mostrar['Texto_Busqueda_Rapida'].str.contains(busqueda_libre.lower(), na=False, regex=False)]
 
     if len(filtro_estado) > 0:
         df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
@@ -194,8 +199,10 @@ with tab1:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
-    # Se eliminó la restricción de los 100 registros. Mostrará la tabla completa.
-    st.dataframe(df_vista, use_container_width=True, height=400)
+    MAX_FILAS = 1000
+    if len(df_vista) > MAX_FILAS:
+        st.warning(f"Mostrando {MAX_FILAS:,} de {len(df_vista):,} resultados. Usa filtros para acotar la búsqueda.")
+    st.dataframe(df_vista.head(MAX_FILAS), use_container_width=True, height=400)
 
 # ------------------------------------------
 # PESTAÑA 2: CRUCE SSA (PERSISTENTE)
@@ -214,15 +221,21 @@ with tab2:
                 col_registro = 'Número de Registro' if 'Número de Registro' in df_cofepris.columns else df_cofepris.columns[0]
                 col_estado = 'Estado' if 'Estado' in df_cofepris.columns else df_cofepris.columns[0]
 
+                lista_filtro_paso1 = df_cofepris['Filtro_Paso1'].tolist()
+                lista_busqueda_cofepris = df_cofepris['Busqueda_COFEPRIS'].tolist()
+
                 for _, row in df_ssa_temp.iterrows():
                     q_original = str(row[col_descripcion])
                     q = limpiar_texto_para_cruce(q_original)
-                    
-                    scores_paso1 = df_cofepris['Filtro_Paso1'].apply(lambda x: fuzz.token_set_ratio(q, x))
-                    candidatos = df_cofepris[scores_paso1 >= 80].copy()
-                    
+
+                    scores_paso1 = process.cdist([q], lista_filtro_paso1, scorer=fuzz.token_set_ratio, workers=-1)[0]
+                    mask_paso1 = scores_paso1 >= 80
+                    candidatos = df_cofepris[mask_paso1].copy()
+
                     if not candidatos.empty:
-                        candidatos['Score_Final'] = candidatos['Busqueda_COFEPRIS'].apply(lambda x: fuzz.token_set_ratio(q, x))
+                        lista_candidatos = [lista_busqueda_cofepris[i] for i in candidatos.index]
+                        scores_finales = process.cdist([q], lista_candidatos, scorer=fuzz.token_set_ratio, workers=-1)[0]
+                        candidatos['Score_Final'] = scores_finales
                         matches_finales = candidatos[candidatos['Score_Final'] >= umbral]
                         
                         if not matches_finales.empty:
