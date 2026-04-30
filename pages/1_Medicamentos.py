@@ -53,7 +53,7 @@ with st.sidebar:
     if st.button("🗑️ Borrar resultados"):
         st.session_state.resultado_med = None
         st.rerun()
-    st.markdown("<br><div style='text-align:center;color:#B38E5D;font-size:0.85em;'>Visor Inteligente v2.5</div>", unsafe_allow_html=True)
+    st.markdown("<br><div style='text-align:center;color:#B38E5D;font-size:0.85em;'>UIGD Versión 3.1</div>", unsafe_allow_html=True)
 
 st.markdown("<h1>💊 Medicamentos COFEPRIS</h1>", unsafe_allow_html=True)
 
