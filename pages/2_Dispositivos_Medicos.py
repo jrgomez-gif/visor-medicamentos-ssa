@@ -13,6 +13,25 @@ FECHA_HOY = date.today().strftime("%-d de %B de %Y").replace(
 
 _COLS_OCULTAR = {'ID', 'Texto_Busqueda_Rapida'}
 
+# ── Autenticación ──────────────────────────────────────────────────────────────
+if 'disp_autenticado' not in st.session_state:
+    st.session_state.disp_autenticado = False
+
+if not st.session_state.disp_autenticado:
+    st.markdown("<h1>🏥 Dispositivos Médicos COFEPRIS</h1>", unsafe_allow_html=True)
+    st.info("Esta sección es de acceso restringido. Ingresa tus credenciales para continuar.")
+    with st.form("login_disp"):
+        usuario = st.text_input("Usuario")
+        contrasena = st.text_input("Contraseña", type="password")
+        if st.form_submit_button("Iniciar sesión"):
+            if usuario == "ocf" and contrasena == "ocf":
+                st.session_state.disp_autenticado = True
+                st.rerun()
+            else:
+                st.error("Usuario o contraseña incorrectos.")
+    st.stop()
+# ──────────────────────────────────────────────────────────────────────────────
+
 @st.cache_data
 def cargar_dispositivos():
     archivos_pq = glob.glob("dispositivos*.parquet")
