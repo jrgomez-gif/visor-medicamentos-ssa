@@ -4,10 +4,7 @@ from rapidfuzz import process, fuzz
 import re
 import io
 import glob
-from utils import limpiar_texto_para_cruce, CSS_TEMA
-
-st.set_page_config(page_title="Medicamentos - COFEPRIS", page_icon="💊", layout="wide")
-st.markdown(CSS_TEMA, unsafe_allow_html=True)
+from utils import limpiar_texto_para_cruce
 
 _COLS_OCULTAR = ['Texto_Limpio_Generica', 'Texto_Limpio_Forma', 'Filtro_Paso1', 'Busqueda_COFEPRIS', 'Texto_Busqueda_Rapida']
 
@@ -43,9 +40,6 @@ def reset_filters_med():
         if k in st.session_state: st.session_state[k] = []
 
 with st.sidebar:
-    try: st.image("COFEPRIS.png", use_container_width=True)
-    except: st.title("COFEPRIS")
-    st.markdown("---")
     st.markdown("### 📖 Guía de Uso")
     st.markdown("""
     **🔍 Buscador:** Usa filtros múltiples o búsqueda por registros específicos.

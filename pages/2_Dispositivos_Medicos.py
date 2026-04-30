@@ -4,10 +4,7 @@ from rapidfuzz import process, fuzz
 import re
 import io
 import glob
-from utils import limpiar_texto_para_cruce, CSS_TEMA
-
-st.set_page_config(page_title="Dispositivos Médicos - COFEPRIS", page_icon="🏥", layout="wide")
-st.markdown(CSS_TEMA, unsafe_allow_html=True)
+from utils import limpiar_texto_para_cruce
 
 _COLS_OCULTAR = {'ID', 'Texto_Busqueda_Rapida', 'Texto_Limpio_Generica', 'Texto_Limpio_Distintiva', 'Filtro_Paso1', 'Busqueda_Disp'}
 
@@ -55,9 +52,6 @@ def reset_filters_disp():
         if k in st.session_state: st.session_state[k] = []
 
 with st.sidebar:
-    try: st.image("COFEPRIS.png", use_container_width=True)
-    except: st.title("COFEPRIS")
-    st.markdown("---")
     st.markdown("### 📖 Guía de Uso")
     st.markdown("""
     **🔍 Buscador:** Filtra por clase, categoría, estado o titular.
@@ -77,6 +71,7 @@ with st.sidebar:
     st.markdown("<br><div style='text-align:center;color:#B38E5D;font-size:0.85em;'>Visor Inteligente v2.5</div>", unsafe_allow_html=True)
 
 st.markdown("<h1>🏥 Dispositivos Médicos COFEPRIS</h1>", unsafe_allow_html=True)
+st.warning("⚠️ **En construcción** — la información se encuentra bajo proceso de validación.")
 
 if df_disp is None:
     st.error(f"🚨 {error_carga}")
