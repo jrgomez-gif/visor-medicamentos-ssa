@@ -27,7 +27,7 @@ with col1:
     - Cruce inteligente con archivos SSA mediante similitud difusa
     - Exportación de resultados a Excel
     """)
-    st.page_link("pages/1_Medicamentos.py", label="Abrir Medicamentos →")
+    st.markdown("👈 Selecciona **1 Medicamentos** en el menú lateral.")
 
 with col2:
     st.markdown("### 🏥 Dispositivos Médicos")
@@ -39,7 +39,7 @@ with col2:
     - Cruce inteligente con archivos de inventario mediante similitud difusa
     - Exportación de resultados a Excel
     """)
-    st.page_link("pages/2_Dispositivos_Medicos.py", label="Abrir Dispositivos Médicos →")
+    st.markdown("👈 Selecciona **2 Dispositivos Medicos** en el menú lateral.")
 
 st.markdown("---")
 st.caption("Trámites Electrónicos COFEPRIS · Visor Inteligente v2.5")
